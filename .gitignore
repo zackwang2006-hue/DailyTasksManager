@@ -1,0 +1,30 @@
+# Python 虚拟环境
+.venv/
+venv/
+env/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyCharm 配置
+.idea/
+
+# 数据库文件
+data/*.db
+data/*.db-journal
+data/*.sqlite
+data/*.sqlite3
+
+# 打包输出
+build/
+dist/
+*.spec
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log

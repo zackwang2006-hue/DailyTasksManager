@@ -10,8 +10,15 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 
-from app.config import APP_NAME, WINDOW_WIDTH, WINDOW_HEIGHT, TASK_CATEGORIES
+from app.config import (
+    APP_NAME,
+    WINDOW_WIDTH,
+    WINDOW_HEIGHT,
+    TASK_CATEGORIES,
+    APP_ICON_PATH,
+)
 from app.services.task_service import TaskService
 from app.ui.task_dialog import TaskDialog
 from app.ui.task_card import TaskCard
@@ -26,6 +33,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
 
+        if APP_ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
+
         self.init_ui()
         self.refresh_tasks()
 
@@ -33,7 +43,7 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
 
-        title_label = QLabel("日程表 1.0")
+        title_label = QLabel("日程表 1.0.1")
         title_label.setObjectName("TitleLabel")
 
         add_button = QPushButton("新增任务")
@@ -70,6 +80,13 @@ class MainWindow(QMainWindow):
             QLabel#TitleLabel {
                 font-size: 26px;
                 font-weight: bold;
+            }
+
+            QLabel#AllDoneLabel {
+                font-size: 22px;
+                font-weight: bold;
+                color: #2e7d32;
+                padding: 40px;
             }
 
             QPushButton {
@@ -120,8 +137,16 @@ class MainWindow(QMainWindow):
     def refresh_tasks(self):
         self.clear_task_layout()
 
+        has_any_task = False
+
         for category_key, category_name in TASK_CATEGORIES.items():
             tasks = self.task_service.get_tasks_by_category(category_key)
+
+            # 当前分类没有任务，就不显示这个分类
+            if not tasks:
+                continue
+
+            has_any_task = True
 
             category_title = QLabel(category_name)
             category_title.setObjectName("CategoryTitle")
@@ -133,19 +158,20 @@ class MainWindow(QMainWindow):
             category_layout = QVBoxLayout(category_frame)
             category_layout.setAlignment(Qt.AlignTop)
 
-            if not tasks:
-                empty_label = QLabel("暂无任务")
-                empty_label.setStyleSheet("color: gray;")
-                category_layout.addWidget(empty_label)
-            else:
-                for task in tasks:
-                    task_card = TaskCard(task)
-                    task_card.complete_requested.connect(self.complete_task)
-                    task_card.delete_requested.connect(self.delete_task)
-                    task_card.highlight_requested.connect(self.toggle_highlight)
-                    category_layout.addWidget(task_card)
+            for task in tasks:
+                task_card = TaskCard(task)
+                task_card.complete_requested.connect(self.complete_task)
+                task_card.delete_requested.connect(self.delete_task)
+                task_card.highlight_requested.connect(self.toggle_highlight)
+                category_layout.addWidget(task_card)
 
             self.task_layout.addWidget(category_frame)
+
+        if not has_any_task:
+            all_done_label = QLabel("太牛逼了，任务全给你做完了")
+            all_done_label.setObjectName("AllDoneLabel")
+            all_done_label.setAlignment(Qt.AlignCenter)
+            self.task_layout.addWidget(all_done_label)
 
         self.task_layout.addStretch()
 

@@ -7,6 +7,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "schedule.db"
 
+# 资源目录
+ASSETS_DIR = BASE_DIR / "assets"
+ICON_DIR = ASSETS_DIR / "icons"
+IMAGE_DIR = ASSETS_DIR / "images"
+
+# 程序图标
+APP_ICON_PATH = ICON_DIR / "app_icon.ico"
+
 # 应用基础配置
 APP_NAME = "ScheduleApp"
 WINDOW_WIDTH = 900

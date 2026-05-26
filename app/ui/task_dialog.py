@@ -7,11 +7,12 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QComboBox,
     QDateEdit,
+    QTimeEdit,
     QCheckBox,
     QPushButton,
     QMessageBox,
 )
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, QTime, Qt
 
 from app.config import TASK_CATEGORIES
 
@@ -21,7 +22,7 @@ class TaskDialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle("新增任务")
-        self.resize(420, 360)
+        self.resize(420, 460)
 
         self.init_ui()
         self.update_ddl_rule()
@@ -44,6 +45,21 @@ class TaskDialog(QDialog):
             self.category_combo.addItem(name, key)
 
         self.category_combo.currentIndexChanged.connect(self.update_ddl_rule)
+
+        self.is_timed_checkbox = QCheckBox("这是定时任务")
+        self.is_timed_checkbox.stateChanged.connect(self.update_ddl_rule)
+
+        self.scheduled_date_label = QLabel("定时日期")
+        self.scheduled_date_input = QDateEdit()
+        self.scheduled_date_input.setCalendarPopup(True)
+        self.scheduled_date_input.setDate(QDate.currentDate().addDays(1))
+        self.scheduled_date_input.setDisplayFormat("yyyy-MM-dd")
+
+        self.scheduled_time_label = QLabel("定时时间")
+        self.scheduled_time_input = QTimeEdit()
+        current_time = QTime.currentTime()
+        self.scheduled_time_input.setTime(QTime(current_time.hour(), current_time.minute()))
+        self.scheduled_time_input.setDisplayFormat("HH:mm")
 
         self.use_ddl_checkbox = QCheckBox("设置 DDL")
         self.use_ddl_checkbox.setChecked(True)
@@ -83,6 +99,12 @@ class TaskDialog(QDialog):
         layout.addWidget(QLabel("任务分类"))
         layout.addWidget(self.category_combo)
 
+        layout.addWidget(self.is_timed_checkbox)
+        layout.addWidget(self.scheduled_date_label)
+        layout.addWidget(self.scheduled_date_input)
+        layout.addWidget(self.scheduled_time_label)
+        layout.addWidget(self.scheduled_time_input)
+
         layout.addWidget(self.use_ddl_checkbox)
         layout.addWidget(self.ddl_input)
         layout.addWidget(self.ddl_rule_label)
@@ -90,7 +112,7 @@ class TaskDialog(QDialog):
         layout.addLayout(button_layout)
 
         self.setStyleSheet("""
-            QLineEdit, QTextEdit, QComboBox, QDateEdit {
+            QLineEdit, QTextEdit, QComboBox, QDateEdit, QTimeEdit {
                 padding: 6px;
                 border: 1px solid #cccccc;
                 border-radius: 6px;
@@ -128,7 +150,20 @@ class TaskDialog(QDialog):
         super().keyPressEvent(event)
 
     def update_ddl_rule(self):
+        is_timed = self.is_timed_checkbox.isChecked()
         category = self.category_combo.currentData()
+
+        self.scheduled_date_label.setVisible(is_timed)
+        self.scheduled_date_input.setVisible(is_timed)
+        self.scheduled_time_label.setVisible(is_timed)
+        self.scheduled_time_input.setVisible(is_timed)
+
+        if is_timed:
+            self.use_ddl_checkbox.setChecked(False)
+            self.use_ddl_checkbox.setEnabled(False)
+            self.ddl_input.setEnabled(False)
+            self.ddl_rule_label.setText("定时任务使用具体日期和时间，不使用普通 DDL")
+            return
 
         if category in ("short", "long"):
             # 短期任务、长期任务：强制有 DDL
@@ -157,6 +192,11 @@ class TaskDialog(QDialog):
             self.ddl_rule_label.setText("")
 
     def toggle_ddl_input(self):
+        if self.is_timed_checkbox.isChecked():
+            self.use_ddl_checkbox.setChecked(False)
+            self.ddl_input.setEnabled(False)
+            return
+
         category = self.category_combo.currentData()
 
         # 短期、长期强制开启
@@ -187,6 +227,20 @@ class TaskDialog(QDialog):
         title = self.title_input.text().strip()
         description = self.description_input.toPlainText().strip()
         category = self.category_combo.currentData()
+        is_timed = self.is_timed_checkbox.isChecked()
+
+        if is_timed:
+            scheduled_date = self.scheduled_date_input.date().toString("yyyy-MM-dd")
+            scheduled_time = self.scheduled_time_input.time().toString("HH:mm:ss")
+
+            return {
+                "title": title,
+                "description": description,
+                "category": category,
+                "ddl": None,
+                "task_type": "timed",
+                "scheduled_at": f"{scheduled_date} {scheduled_time}",
+            }
 
         if category in ("short", "long"):
             ddl = self.ddl_input.date().toString("yyyy-MM-dd")
@@ -205,4 +259,6 @@ class TaskDialog(QDialog):
             "description": description,
             "category": category,
             "ddl": ddl,
+            "task_type": "daily" if category == "daily" else "normal",
+            "scheduled_at": None,
         }

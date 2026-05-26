@@ -9,10 +9,38 @@ CREATE TABLE IF NOT EXISTS tasks (
     description TEXT,
     category TEXT NOT NULL,
     ddl TEXT,
+    task_type TEXT NOT NULL DEFAULT 'normal',
+    scheduled_at TEXT,
     is_completed INTEGER NOT NULL DEFAULT 0,
     is_highlighted INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     completed_at TEXT
+);
+"""
+
+CREATE_TASK_LOGS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS task_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER,
+    title TEXT NOT NULL,
+    description TEXT,
+    category TEXT,
+    task_type TEXT,
+    ddl TEXT,
+    scheduled_at TEXT,
+    completed_at TEXT NOT NULL,
+    created_at TEXT
+);
+"""
+
+CREATE_DAILY_CHECKINS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS daily_checkins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    checkin_date TEXT NOT NULL,
+    is_completed INTEGER NOT NULL DEFAULT 1,
+    completed_at TEXT NOT NULL,
+    UNIQUE(task_id, checkin_date)
 );
 """
 
@@ -32,7 +60,32 @@ class DBManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(CREATE_TASKS_TABLE_SQL)
+            cursor.execute(CREATE_TASK_LOGS_TABLE_SQL)
+            cursor.execute(CREATE_DAILY_CHECKINS_TABLE_SQL)
+            self.migrate_tasks_table(cursor)
             conn.commit()
+
+    def migrate_tasks_table(self, cursor):
+        cursor.execute("PRAGMA table_info(tasks)")
+        columns = {row["name"] for row in cursor.fetchall()}
+
+        if "task_type" not in columns:
+            cursor.execute(
+                "ALTER TABLE tasks "
+                "ADD COLUMN task_type TEXT NOT NULL DEFAULT 'normal'"
+            )
+
+        if "scheduled_at" not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN scheduled_at TEXT")
+
+        cursor.execute(
+            """
+            UPDATE tasks
+            SET task_type = 'daily'
+            WHERE category = 'daily'
+              AND (task_type IS NULL OR task_type = 'normal')
+            """
+        )
 
     def execute(self, sql, params=None):
         if params is None:

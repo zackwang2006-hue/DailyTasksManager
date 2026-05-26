@@ -2,27 +2,43 @@ from datetime import datetime
 
 from app.database.db_manager import DBManager
 from app.models.task import Task
+from app.services.checkin_service import CheckinService
+from app.services.history_service import HistoryService
 
 
 class TaskService:
     def __init__(self):
         self.db = DBManager()
+        self.history_service = HistoryService()
+        self.checkin_service = CheckinService()
 
-    def add_task(self, title, description="", category="short", ddl=None):
+    def add_task(
+        self,
+        title,
+        description="",
+        category="short",
+        ddl=None,
+        task_type="normal",
+        scheduled_at=None,
+    ):
         now = datetime.now().isoformat(timespec="seconds")
+
+        if task_type != "timed":
+            task_type = "daily" if category == "daily" else "normal"
+            scheduled_at = None
 
         sql = """
         INSERT INTO tasks (
-            title, description, category, ddl,
+            title, description, category, ddl, task_type, scheduled_at,
             is_completed, is_highlighted,
             created_at, completed_at
         )
-        VALUES (?, ?, ?, ?, 0, 0, ?, NULL)
+        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, NULL)
         """
 
         return self.db.execute(
             sql,
-            (title, description, category, ddl, now)
+            (title, description, category, ddl, task_type, scheduled_at, now)
         )
 
     def get_uncompleted_tasks(self):
@@ -31,13 +47,9 @@ class TaskService:
         FROM tasks
         WHERE is_completed = 0
         ORDER BY 
-            CASE category
-                WHEN 'short' THEN 1
-                WHEN 'long' THEN 2
-                WHEN 'daily' THEN 3
-                WHEN 'extra' THEN 4
-                ELSE 5
-            END,
+            CASE WHEN task_type = 'timed' THEN 0 ELSE 1 END,
+            CASE WHEN task_type = 'timed' THEN scheduled_at END ASC,
+            is_highlighted DESC,
             ddl IS NULL,
             ddl ASC,
             created_at DESC
@@ -57,19 +69,44 @@ class TaskService:
         rows = self.db.fetch_all(sql)
         return [Task.from_row(row) for row in rows]
 
+    def get_timed_tasks(self):
+        sql = """
+        SELECT *
+        FROM tasks
+        WHERE is_completed = 0 AND task_type = 'timed'
+        ORDER BY
+            scheduled_at IS NULL,
+            scheduled_at ASC,
+            created_at DESC
+        """
+
+        rows = self.db.fetch_all(sql)
+        return [Task.from_row(row) for row in rows]
+
     def get_tasks_by_category(self, category):
         sql = """
         SELECT *
         FROM tasks
         WHERE is_completed = 0 AND category = ?
-        ORDER BY ddl IS NULL, ddl ASC, created_at DESC
+        ORDER BY
+            CASE WHEN task_type = 'timed' THEN 0 ELSE 1 END,
+            CASE WHEN task_type = 'timed' THEN scheduled_at END ASC,
+            is_highlighted DESC,
+            ddl IS NULL,
+            ddl ASC,
+            created_at DESC
         """
 
         rows = self.db.fetch_all(sql, (category,))
         return [Task.from_row(row) for row in rows]
 
     def complete_task(self, task_id):
-        now = datetime.now().isoformat(timespec="seconds")
+        task = self.get_task_by_id(task_id)
+
+        if task is None or task.is_completed:
+            return
+
+        completed_at = datetime.now().isoformat(timespec="seconds")
 
         sql = """
         UPDATE tasks
@@ -78,7 +115,29 @@ class TaskService:
         WHERE id = ?
         """
 
-        self.db.execute(sql, (now, task_id))
+        self.db.execute(sql, (completed_at, task_id))
+
+        task.completed_at = completed_at
+        self.history_service.add_task_log(task)
+
+        if task.task_type == "daily" or task.category == "daily":
+            checkin_date = datetime.fromisoformat(completed_at).date().isoformat()
+            self.checkin_service.add_daily_checkin(
+                task.task_id,
+                checkin_date,
+                completed_at,
+            )
+
+    def get_daily_tasks(self):
+        sql = """
+        SELECT *
+        FROM tasks
+        WHERE task_type = 'daily' OR category = 'daily'
+        ORDER BY created_at DESC
+        """
+
+        rows = self.db.fetch_all(sql)
+        return [Task.from_row(row) for row in rows]
 
     def delete_task(self, task_id):
         sql = """

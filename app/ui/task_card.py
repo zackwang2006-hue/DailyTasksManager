@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QFrame,
@@ -10,12 +10,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from app.models.task import Task
+from app.ui.task_colors import get_short_task_ddl_status, get_task_card_color
 
 
 class TaskCard(QFrame):
     complete_requested = Signal(int)
     delete_requested = Signal(int)
-    highlight_requested = Signal(int)
+    edit_requested = Signal(int)
     clicked = Signal(object)
 
     def __init__(self, task: Task, parent=None):
@@ -24,6 +25,7 @@ class TaskCard(QFrame):
         self.task = task
         self.is_expanded = False
 
+        self.setFixedWidth(280)
         self.setObjectName("TaskCard")
         self.init_ui()
         self.apply_style()
@@ -42,10 +44,6 @@ class TaskCard(QFrame):
             self.timed_label.setObjectName("TimedLabel")
             title_layout.addWidget(self.timed_label)
 
-        if self.task.is_highlighted:
-            self.highlight_label = QLabel("★ 高亮")
-            self.highlight_label.setObjectName("HighlightLabel")
-            title_layout.addWidget(self.highlight_label)
         title_layout.addStretch()
 
         self.description_label = QLabel(self.task.description if self.task.description else "无描述")
@@ -60,16 +58,16 @@ class TaskCard(QFrame):
         button_layout = QHBoxLayout(self.button_widget)
         button_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.highlight_button = QPushButton("高亮/取消")
+        self.edit_button = QPushButton("编辑")
         self.complete_button = QPushButton("完成")
         self.delete_button = QPushButton("删除")
 
-        self.highlight_button.clicked.connect(self.on_highlight_clicked)
+        self.edit_button.clicked.connect(self.on_edit_clicked)
         self.complete_button.clicked.connect(self.on_complete_clicked)
         self.delete_button.clicked.connect(self.on_delete_clicked)
 
         button_layout.addStretch()
-        button_layout.addWidget(self.highlight_button)
+        button_layout.addWidget(self.edit_button)
         button_layout.addWidget(self.complete_button)
         button_layout.addWidget(self.delete_button)
 
@@ -89,11 +87,11 @@ class TaskCard(QFrame):
         if status == "expired":
             return f"DDL：{self.task.ddl}（已过期）"
         elif status == "urgent":
-            return f"DDL：{self.task.ddl}（紧急）"
+            return f"DDL：{self.format_datetime(self.task.ddl)}（紧急）"
         elif status == "soon":
-            return f"DDL：{self.task.ddl}（较近）"
+            return f"DDL：{self.format_datetime(self.task.ddl)}（较近）"
         else:
-            return f"DDL：{self.task.ddl}（充足）"
+            return f"DDL：{self.format_datetime(self.task.ddl)}（充足）"
 
     def is_timed_task(self):
         return self.task.task_type == "timed"
@@ -110,55 +108,13 @@ class TaskCard(QFrame):
         return f"定时：{scheduled_at.strftime('%Y-%m-%d %H:%M')}"
 
     def get_ddl_status(self):
-        if not self.task.ddl:
-            return "none"
+        if self.task.category == "short":
+            return get_short_task_ddl_status(self.task)
 
-        try:
-            ddl_date = datetime.fromisoformat(self.task.ddl).date()
-        except ValueError:
-            return "none"
-
-        today = date.today()
-        diff_days = (ddl_date - today).days
-
-        if diff_days < 0:
-            return "expired"
-        elif diff_days <= 1:
-            return "urgent"
-        elif diff_days <= 3:
-            return "soon"
-        else:
-            return "safe"
+        return "safe" if self.task.ddl else "none"
 
     def apply_style(self):
-        ddl_status = self.get_ddl_status()
-        ddl_color = "#666666"
-
-        if self.task.is_highlighted:
-            border_color = "#64b5f6"
-            background_color = "#eaf4ff"
-        elif self.is_timed_task():
-            border_color = "#9575cd"
-            background_color = "#f3efff"
-        elif ddl_status in ["expired", "urgent"]:
-            border_color = "#e53935"
-            background_color = "#fff0f0"
-        elif ddl_status == "soon":
-            border_color = "#fbc02d"
-            background_color = "#fffbe6"
-        elif ddl_status == "safe":
-            border_color = "#43a047"
-            background_color = "#f0fff4"
-        else:
-            border_color = "#cccccc"
-            background_color = "#ffffff"
-
-        if ddl_status in ["expired", "urgent"]:
-            ddl_color = "#e53935"
-        elif ddl_status == "soon":
-            ddl_color = "#f9a825"
-        elif ddl_status == "safe":
-            ddl_color = "#43a047"
+        border_color, background_color, ddl_color = get_task_card_color(self.task)
 
         self.setStyleSheet(f"""
             QFrame#TaskCard {{
@@ -172,25 +128,24 @@ class TaskCard(QFrame):
             QLabel#TaskTitle {{
                 font-size: 16px;
                 font-weight: bold;
+                background-color: transparent;
             }}
 
             QLabel#TaskDescription {{
                 color: #444444;
+                background-color: transparent;
             }}
 
             QLabel#DDLLabel {{
                 color: {ddl_color};
                 font-weight: bold;
-            }}
-
-            QLabel#HighlightLabel {{
-                color: #1976d2;
-                font-weight: bold;
+                background-color: transparent;
             }}
 
             QLabel#TimedLabel {{
                 color: #5e35b1;
                 font-weight: bold;
+                background-color: transparent;
             }}
 
             QPushButton {{
@@ -221,5 +176,14 @@ class TaskCard(QFrame):
     def on_delete_clicked(self):
         self.delete_requested.emit(self.task.task_id)
 
-    def on_highlight_clicked(self):
-        self.highlight_requested.emit(self.task.task_id)
+    def on_edit_clicked(self):
+        self.edit_requested.emit(self.task.task_id)
+
+    def format_datetime(self, value):
+        if value and len(value) <= 10:
+            return value
+
+        try:
+            return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
+        except (TypeError, ValueError):
+            return value

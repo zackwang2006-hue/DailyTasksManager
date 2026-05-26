@@ -20,6 +20,14 @@ TASK_TYPE_LABELS = {
     "daily": "每日任务",
 }
 
+CATEGORY_LABELS = {
+    "short": "短期任务",
+    "long": "长期任务",
+    "daily": "每日任务",
+    "extra": "附加任务",
+    "timed": "定时任务",
+}
+
 
 class HistoryPage(QWidget):
     def __init__(self, parent=None):
@@ -33,10 +41,14 @@ class HistoryPage(QWidget):
         self.refresh_calendar()
         self.show_logs_for_date(self.selected_date)
 
+    def refresh_page(self):
+        self.refresh_calendar()
+        self.show_logs_for_date(self.selected_date)
+
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
-        title_label = QLabel("历史")
+        title_label = QLabel("历史完成")
         title_label.setObjectName("TitleLabel")
 
         self.calendar_frame = QFrame()
@@ -99,6 +111,36 @@ class HistoryPage(QWidget):
                 background-color: #eaf4ff;
             }
 
+            QPushButton#DayButton[status="light"] {
+                background-color: #e8f5e9;
+                border: 1px solid #a5d6a7;
+                color: #2e7d32;
+            }
+
+            QPushButton#DayButton[status="medium"] {
+                background-color: #66bb6a;
+                border: 1px solid #43a047;
+                color: #ffffff;
+            }
+
+            QPushButton#DayButton[status="dark"] {
+                background-color: #1b5e20;
+                border: 1px solid #0f3d14;
+                color: #ffffff;
+            }
+
+            QPushButton#DayButton[status="future"] {
+                background-color: #eeeeee;
+                border: 1px solid #dddddd;
+                color: #999999;
+            }
+
+            QPushButton#DayButton:disabled {
+                background-color: #eeeeee;
+                border: 1px solid #dddddd;
+                color: #999999;
+            }
+
             QLabel#DetailTitle {
                 font-size: 18px;
                 font-weight: bold;
@@ -112,13 +154,19 @@ class HistoryPage(QWidget):
                 padding: 8px;
             }
 
+            QFrame#LogCard QLabel {
+                background-color: transparent;
+            }
+
             QLabel#LogTitle {
                 font-size: 15px;
                 font-weight: bold;
+                background-color: transparent;
             }
 
             QLabel#LogMeta {
                 color: #666666;
+                background-color: transparent;
             }
 
             QLabel#EmptyLabel {
@@ -143,6 +191,9 @@ class HistoryPage(QWidget):
             self.calendar_layout.addWidget(label, 0, col)
 
         today = date.today()
+        if self.selected_date > today.isoformat():
+            self.selected_date = today.isoformat()
+
         current_monday = today - timedelta(days=today.weekday())
         start_date = current_monday - timedelta(days=21)
         end_date = current_monday + timedelta(days=6)
@@ -168,13 +219,29 @@ class HistoryPage(QWidget):
 
                 button = QPushButton(text)
                 button.setObjectName("DayButton")
+                button.setProperty("status", self.get_day_status(day, count, today))
                 button.setProperty("selected", date_str == self.selected_date)
-                button.clicked.connect(
-                    lambda checked=False, selected=date_str: self.select_date(selected)
-                )
+                button.setContextMenuPolicy(Qt.NoContextMenu)
+                if day > today:
+                    button.setEnabled(False)
+                else:
+                    button.clicked.connect(
+                        lambda checked=False, selected=date_str: self.select_date(selected)
+                    )
 
                 self.day_buttons[date_str] = button
                 self.calendar_layout.addWidget(button, week_offset + 1, day_offset)
+
+    def get_day_status(self, day, count, today):
+        if day > today:
+            return "future"
+        if count >= 5:
+            return "dark"
+        if count >= 3:
+            return "medium"
+        if count >= 1:
+            return "light"
+        return "normal"
 
     def select_date(self, date_str):
         self.selected_date = date_str
@@ -213,7 +280,7 @@ class HistoryPage(QWidget):
         title_label = QLabel(log["title"])
         title_label.setObjectName("LogTitle")
 
-        task_type = TASK_TYPE_LABELS.get(log["task_type"] or "normal", log["task_type"])
+        task_type = self.get_task_type_text(log)
         completed_at = self.format_datetime(log["completed_at"])
         meta_text = f"{task_type} · 完成：{completed_at}"
 
@@ -233,6 +300,18 @@ class HistoryPage(QWidget):
             layout.addWidget(description_label)
 
         return card
+
+    def get_task_type_text(self, log):
+        if log["task_type"] == "timed" or log["category"] == "timed":
+            return "定时任务"
+
+        if log["task_type"] == "daily" or log["category"] == "daily":
+            return "每日任务"
+
+        return CATEGORY_LABELS.get(
+            log["category"] or "",
+            TASK_TYPE_LABELS.get(log["task_type"] or "normal", "普通任务"),
+        )
 
     def clear_layout(self, layout):
         while layout.count():

@@ -11,7 +11,7 @@ class Task:
     task_type: str = "normal"
     scheduled_at: str | None = None
     is_completed: bool = False
-    is_highlighted: bool = False
+    is_deleted: bool = False
     created_at: str | None = None
     completed_at: str | None = None
 
@@ -28,7 +28,7 @@ class Task:
             task_type=row["task_type"] if "task_type" in keys else "normal",
             scheduled_at=row["scheduled_at"] if "scheduled_at" in keys else None,
             is_completed=bool(row["is_completed"]),
-            is_highlighted=bool(row["is_highlighted"]),
+            is_deleted=bool(row["is_deleted"]) if "is_deleted" in keys else False,
             created_at=row["created_at"],
             completed_at=row["completed_at"],
         )

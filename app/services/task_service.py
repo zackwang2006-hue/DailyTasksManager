@@ -23,14 +23,18 @@ class TaskService:
     ):
         now = datetime.now().isoformat(timespec="seconds")
 
-        if task_type != "timed":
+        if category == "timed" or task_type == "timed":
+            category = "timed"
+            task_type = "timed"
+            ddl = None
+        else:
             task_type = "daily" if category == "daily" else "normal"
             scheduled_at = None
 
         sql = """
         INSERT INTO tasks (
             title, description, category, ddl, task_type, scheduled_at,
-            is_completed, is_highlighted,
+            is_completed, is_deleted,
             created_at, completed_at
         )
         VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, NULL)
@@ -46,10 +50,10 @@ class TaskService:
         SELECT *
         FROM tasks
         WHERE is_completed = 0
+          AND COALESCE(is_deleted, 0) = 0
         ORDER BY 
             CASE WHEN task_type = 'timed' THEN 0 ELSE 1 END,
             CASE WHEN task_type = 'timed' THEN scheduled_at END ASC,
-            is_highlighted DESC,
             ddl IS NULL,
             ddl ASC,
             created_at DESC
@@ -63,6 +67,7 @@ class TaskService:
         SELECT *
         FROM tasks
         WHERE is_completed = 1
+          AND COALESCE(is_deleted, 0) = 0
         ORDER BY completed_at DESC
         """
 
@@ -73,7 +78,9 @@ class TaskService:
         sql = """
         SELECT *
         FROM tasks
-        WHERE is_completed = 0 AND task_type = 'timed'
+        WHERE is_completed = 0
+          AND task_type = 'timed'
+          AND COALESCE(is_deleted, 0) = 0
         ORDER BY
             scheduled_at IS NULL,
             scheduled_at ASC,
@@ -87,11 +94,12 @@ class TaskService:
         sql = """
         SELECT *
         FROM tasks
-        WHERE is_completed = 0 AND category = ?
+        WHERE is_completed = 0
+          AND category = ?
+          AND COALESCE(is_deleted, 0) = 0
         ORDER BY
             CASE WHEN task_type = 'timed' THEN 0 ELSE 1 END,
             CASE WHEN task_type = 'timed' THEN scheduled_at END ASC,
-            is_highlighted DESC,
             ddl IS NULL,
             ddl ASC,
             created_at DESC
@@ -132,7 +140,8 @@ class TaskService:
         sql = """
         SELECT *
         FROM tasks
-        WHERE task_type = 'daily' OR category = 'daily'
+        WHERE (task_type = 'daily' OR category = 'daily')
+          AND COALESCE(is_deleted, 0) = 0
         ORDER BY created_at DESC
         """
 
@@ -140,6 +149,12 @@ class TaskService:
         return [Task.from_row(row) for row in rows]
 
     def delete_task(self, task_id):
+        task = self.get_task_by_id(task_id)
+
+        if task is not None and (task.task_type == "daily" or task.category == "daily"):
+            self.soft_delete_task(task_id)
+            return
+
         sql = """
         DELETE FROM tasks
         WHERE id = ?
@@ -147,27 +162,21 @@ class TaskService:
 
         self.db.execute(sql, (task_id,))
 
-    def toggle_highlight(self, task_id):
-        task = self.get_task_by_id(task_id)
-
-        if task is None:
-            return
-
-        new_value = 0 if task.is_highlighted else 1
-
+    def soft_delete_task(self, task_id):
         sql = """
         UPDATE tasks
-        SET is_highlighted = ?
+        SET is_deleted = 1
         WHERE id = ?
         """
 
-        self.db.execute(sql, (new_value, task_id))
+        self.db.execute(sql, (task_id,))
 
     def get_task_by_id(self, task_id):
         sql = """
         SELECT *
         FROM tasks
         WHERE id = ?
+          AND COALESCE(is_deleted, 0) = 0
         """
 
         row = self.db.fetch_one(sql, (task_id,))
@@ -177,17 +186,36 @@ class TaskService:
 
         return Task.from_row(row)
 
-    def update_task(self, task_id, title, description, category, ddl):
+    def update_task(
+        self,
+        task_id,
+        title,
+        description,
+        category,
+        ddl,
+        task_type="normal",
+        scheduled_at=None,
+    ):
+        if category == "timed" or task_type == "timed":
+            category = "timed"
+            task_type = "timed"
+            ddl = None
+        else:
+            task_type = "daily" if category == "daily" else "normal"
+            scheduled_at = None
+
         sql = """
         UPDATE tasks
         SET title = ?,
             description = ?,
             category = ?,
-            ddl = ?
+            ddl = ?,
+            task_type = ?,
+            scheduled_at = ?
         WHERE id = ?
         """
 
         self.db.execute(
             sql,
-            (title, description, category, ddl, task_id)
+            (title, description, category, ddl, task_type, scheduled_at, task_id)
         )

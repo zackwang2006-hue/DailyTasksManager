@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     scheduled_at TEXT,
     is_completed INTEGER NOT NULL DEFAULT 0,
     is_highlighted INTEGER NOT NULL DEFAULT 0,
+    is_deleted INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     completed_at TEXT
 );
@@ -77,6 +78,12 @@ class DBManager:
 
         if "scheduled_at" not in columns:
             cursor.execute("ALTER TABLE tasks ADD COLUMN scheduled_at TEXT")
+
+        if "is_deleted" not in columns:
+            cursor.execute(
+                "ALTER TABLE tasks "
+                "ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
+            )
 
         cursor.execute(
             """

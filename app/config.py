@@ -26,4 +26,5 @@ TASK_CATEGORIES = {
     "long": "长期任务",
     "daily": "每日任务",
     "extra": "附加任务",
+    "timed": "定时任务",
 }

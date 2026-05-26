@@ -21,8 +21,21 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         tab_widget = QTabWidget()
-        tab_widget.addTab(TaskPage(self), "任务")
-        tab_widget.addTab(HistoryPage(self), "历史")
-        tab_widget.addTab(CheckinPage(self), "打卡")
+
+        self.task_page = TaskPage(self)
+        self.history_page = HistoryPage(self)
+        self.checkin_page = CheckinPage(self)
+
+        self.task_page.data_changed.connect(self.refresh_pages)
+        self.checkin_page.data_changed.connect(self.refresh_pages)
+
+        tab_widget.addTab(self.task_page, "任务清单")
+        tab_widget.addTab(self.history_page, "历史完成")
+        tab_widget.addTab(self.checkin_page, "打卡记录")
 
         self.setCentralWidget(tab_widget)
+
+    def refresh_pages(self):
+        self.task_page.refresh_tasks()
+        self.history_page.refresh_page()
+        self.checkin_page.refresh_page()

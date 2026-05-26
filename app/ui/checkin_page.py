@@ -1,11 +1,13 @@
 from datetime import date, datetime, timedelta
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -14,9 +16,12 @@ from PySide6.QtWidgets import (
 
 from app.services.checkin_service import CheckinService
 from app.services.task_service import TaskService
+from app.ui.task_dialog import TaskDialog
 
 
 class CheckinPage(QWidget):
+    data_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -29,10 +34,13 @@ class CheckinPage(QWidget):
         self.init_ui()
         self.refresh_tasks()
 
+    def refresh_page(self):
+        self.refresh_tasks()
+
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
-        title_label = QLabel("打卡")
+        title_label = QLabel("打卡记录")
         title_label.setObjectName("TitleLabel")
 
         content_layout = QHBoxLayout()
@@ -63,10 +71,19 @@ class CheckinPage(QWidget):
         self.calendar_title = QLabel("请选择一个每日任务")
         self.calendar_title.setObjectName("PanelTitle")
 
+        self.start_date_label = QLabel("")
+        self.start_date_label.setObjectName("StartDateLabel")
+
+        self.range_hint_label = QLabel("只显示最近 28 天的完成情况")
+        self.range_hint_label.setObjectName("RangeHintLabel")
+        self.range_hint_label.setAlignment(Qt.AlignCenter)
+
         self.calendar_grid = QGridLayout()
         self.calendar_grid.setSpacing(8)
 
         calendar_outer_layout.addWidget(self.calendar_title)
+        calendar_outer_layout.addWidget(self.start_date_label)
+        calendar_outer_layout.addWidget(self.range_hint_label)
         calendar_outer_layout.addLayout(self.calendar_grid)
         calendar_outer_layout.addStretch()
 
@@ -95,6 +112,15 @@ class CheckinPage(QWidget):
             QLabel#PanelTitle {
                 font-size: 18px;
                 font-weight: bold;
+            }
+
+            QLabel#StartDateLabel {
+                color: #555555;
+            }
+
+            QLabel#RangeHintLabel {
+                color: #777777;
+                padding: 4px;
             }
 
             QPushButton#TaskButton {
@@ -169,13 +195,23 @@ class CheckinPage(QWidget):
         task_ids = {task.task_id for task in self.daily_tasks}
         if self.selected_task.task_id not in task_ids:
             self.selected_task = self.daily_tasks[0]
+        else:
+            self.selected_task = next(
+                task for task in self.daily_tasks
+                if task.task_id == self.selected_task.task_id
+            )
 
         for task in self.daily_tasks:
             button = QPushButton(task.title)
             button.setObjectName("TaskButton")
             button.setProperty("selected", task.task_id == self.selected_task.task_id)
+            button.setContextMenuPolicy(Qt.CustomContextMenu)
             button.clicked.connect(
                 lambda checked=False, selected=task: self.select_task(selected)
+            )
+            button.customContextMenuRequested.connect(
+                lambda position, selected=task, source=button:
+                    self.open_task_menu(selected, source, position)
             )
 
             self.task_buttons[task.task_id] = button
@@ -194,6 +230,57 @@ class CheckinPage(QWidget):
 
         self.refresh_calendar(task)
 
+    def open_task_menu(self, task, source, position):
+        menu = QMenu(self)
+        edit_action = menu.addAction("编辑每日任务")
+        delete_action = menu.addAction("删除每日任务")
+
+        selected_action = menu.exec(source.mapToGlobal(position))
+
+        if selected_action == edit_action:
+            self.open_edit_task_dialog(task.task_id)
+        elif selected_action == delete_action:
+            self.delete_daily_task(task.task_id)
+
+    def open_edit_task_dialog(self, task_id):
+        task = self.task_service.get_task_by_id(task_id)
+        if task is None:
+            return
+
+        dialog = TaskDialog(task, self)
+
+        if dialog.exec():
+            data = dialog.get_task_data()
+            self.task_service.update_task(
+                task_id=task_id,
+                title=data["title"],
+                description=data["description"],
+                category=data["category"],
+                ddl=data["ddl"],
+                task_type=data["task_type"],
+                scheduled_at=data["scheduled_at"],
+            )
+            self.refresh_tasks()
+            self.data_changed.emit()
+
+    def delete_daily_task(self, task_id):
+        result = QMessageBox.question(
+            self,
+            "确认删除",
+            "确定要删除这个每日任务吗？历史打卡记录会保留。",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+
+        if result != QMessageBox.Yes:
+            return
+
+        if self.selected_task is not None and self.selected_task.task_id == task_id:
+            self.selected_task = None
+
+        self.task_service.soft_delete_task(task_id)
+        self.refresh_tasks()
+        self.data_changed.emit()
+
     def refresh_calendar(self, task):
         self.clear_layout(self.calendar_grid)
 
@@ -205,15 +292,18 @@ class CheckinPage(QWidget):
 
         if task is None:
             self.calendar_title.setText("请选择一个每日任务")
+            self.start_date_label.setText("")
             return
-
-        self.calendar_title.setText(f"{task.title} · 最近 28 天")
 
         today = date.today()
         current_monday = today - timedelta(days=today.weekday())
-        start_date = current_monday - timedelta(days=21)
         checkin_dates = self.checkin_service.get_checkin_dates_by_task(task.task_id)
         created_date = self.get_date_part(task.created_at)
+        start_date = self.get_task_start_date(created_date, checkin_dates)
+        streak_days = self.get_streak_days(checkin_dates, today)
+
+        self.calendar_title.setText(f"{task.title} · 你已经坚持打卡 {streak_days} 天")
+        self.start_date_label.setText(f"始于 {start_date.strftime('%Y 年 %m 月 %d 日')}")
 
         for week_offset in range(4):
             week_start = current_monday - timedelta(days=week_offset * 7)
@@ -228,11 +318,35 @@ class CheckinPage(QWidget):
                 cell.setAlignment(Qt.AlignCenter)
                 self.calendar_grid.addWidget(cell, week_offset + 1, day_offset)
 
+    def get_task_start_date(self, created_date, checkin_dates):
+        if created_date:
+            return created_date
+
+        if checkin_dates:
+            return datetime.fromisoformat(min(checkin_dates)).date()
+
+        return date.today()
+
+    def get_streak_days(self, checkin_dates, today):
+        if not checkin_dates:
+            return 0
+
+        current_day = today
+        if current_day.isoformat() not in checkin_dates:
+            current_day -= timedelta(days=1)
+
+        streak_days = 0
+        while current_day.isoformat() in checkin_dates:
+            streak_days += 1
+            current_day -= timedelta(days=1)
+
+        return streak_days
+
     def get_day_status(self, day, date_str, created_date, checkin_dates, today):
         if date_str in checkin_dates:
             return "done"
 
-        if day < created_date or day > today:
+        if (created_date and day < created_date) or day > today:
             return "disabled"
 
         return "missed"
@@ -241,7 +355,7 @@ class CheckinPage(QWidget):
         try:
             return datetime.fromisoformat(value).date()
         except (TypeError, ValueError):
-            return date.today()
+            return None
 
     def clear_layout(self, layout):
         while layout.count():

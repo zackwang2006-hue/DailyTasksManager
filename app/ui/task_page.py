@@ -1,6 +1,7 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -16,20 +17,78 @@ from app.ui.task_card import TaskCard
 from app.ui.task_dialog import TaskDialog
 
 
+class TaskGridSection(QFrame):
+    card_width = 280
+    card_spacing = 12
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.cards = []
+        self.available_width = 0
+        self.column_count = 0
+        self.setObjectName("CategoryFrame")
+
+        self.grid_layout = QGridLayout(self)
+        self.grid_layout.setContentsMargins(8, 8, 8, 8)
+        self.grid_layout.setHorizontalSpacing(self.card_spacing)
+        self.grid_layout.setVerticalSpacing(self.card_spacing)
+        self.grid_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+    def add_task_card(self, task_card):
+        self.cards.append(task_card)
+        self.reflow_cards()
+
+    def set_available_width(self, width):
+        if width <= 0:
+            return
+
+        self.available_width = width
+        self.setFixedWidth(width)
+        self.reflow_cards()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.reflow_cards()
+
+    def reflow_cards(self):
+        available_width = max(1, self.available_width or self.width())
+        margins = self.grid_layout.contentsMargins()
+        usable_width = max(1, available_width - margins.left() - margins.right())
+        column_width = self.card_width + self.card_spacing
+        columns = max(1, (usable_width + self.card_spacing) // column_width)
+
+        if columns == self.column_count and self.grid_layout.count() == len(self.cards):
+            return
+
+        self.column_count = columns
+        while self.grid_layout.count():
+            self.grid_layout.takeAt(0)
+
+        for index, card in enumerate(self.cards):
+            row = index // columns
+            column = index % columns
+            self.grid_layout.addWidget(card, row, column, Qt.AlignTop)
+
+
 class TaskPage(QWidget):
+    data_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self.task_service = TaskService()
         self.expanded_task_card = None
+        self.grid_sections = []
 
         self.init_ui()
         self.refresh_tasks()
+        self.init_refresh_timer()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
-        title_label = QLabel("任务")
+        title_label = QLabel("任务清单")
         title_label.setObjectName("TitleLabel")
 
         add_button = QPushButton("新增任务")
@@ -104,7 +163,7 @@ class TaskPage(QWidget):
         """)
 
     def open_add_task_dialog(self):
-        dialog = TaskDialog(self)
+        dialog = TaskDialog(parent=self)
 
         if dialog.exec():
             data = dialog.get_task_data()
@@ -118,11 +177,17 @@ class TaskPage(QWidget):
                 scheduled_at=data["scheduled_at"],
             )
 
-            self.refresh_tasks()
+            self.data_changed.emit()
+
+    def init_refresh_timer(self):
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.refresh_tasks)
+        self.refresh_timer.start(60000)
 
     def refresh_tasks(self):
         self.clear_task_layout()
         self.expanded_task_card = None
+        self.grid_sections = []
 
         has_any_task = False
 
@@ -148,27 +213,45 @@ class TaskPage(QWidget):
             self.task_layout.addWidget(all_done_label)
 
         self.task_layout.addStretch()
+        QTimer.singleShot(0, self.update_grid_widths)
 
     def add_task_section(self, section_name, tasks):
         category_title = QLabel(section_name)
         category_title.setObjectName("CategoryTitle")
         self.task_layout.addWidget(category_title)
 
-        category_frame = QFrame()
-        category_frame.setObjectName("CategoryFrame")
-
-        category_layout = QVBoxLayout(category_frame)
-        category_layout.setAlignment(Qt.AlignTop)
+        category_frame = TaskGridSection()
+        self.grid_sections.append(category_frame)
+        category_frame.set_available_width(self.get_grid_width())
 
         for task in tasks:
             task_card = TaskCard(task)
             task_card.complete_requested.connect(self.complete_task)
             task_card.delete_requested.connect(self.delete_task)
-            task_card.highlight_requested.connect(self.toggle_highlight)
+            task_card.edit_requested.connect(self.open_edit_task_dialog)
             task_card.clicked.connect(self.toggle_task_card)
-            category_layout.addWidget(task_card)
+            category_frame.add_task_card(task_card)
 
         self.task_layout.addWidget(category_frame)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_grid_widths()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.update_grid_widths()
+
+    def get_grid_width(self):
+        if not hasattr(self, "scroll_area"):
+            return 0
+
+        return max(1, self.scroll_area.viewport().width() - 8)
+
+    def update_grid_widths(self):
+        width = self.get_grid_width()
+        for section in self.grid_sections:
+            section.set_available_width(width)
 
     def clear_task_layout(self):
         self.expanded_task_card = None
@@ -194,7 +277,27 @@ class TaskPage(QWidget):
 
     def complete_task(self, task_id):
         self.task_service.complete_task(task_id)
-        self.refresh_tasks()
+        self.data_changed.emit()
+
+    def open_edit_task_dialog(self, task_id):
+        task = self.task_service.get_task_by_id(task_id)
+        if task is None:
+            return
+
+        dialog = TaskDialog(task, self)
+
+        if dialog.exec():
+            data = dialog.get_task_data()
+            self.task_service.update_task(
+                task_id=task_id,
+                title=data["title"],
+                description=data["description"],
+                category=data["category"],
+                ddl=data["ddl"],
+                task_type=data["task_type"],
+                scheduled_at=data["scheduled_at"],
+            )
+            self.data_changed.emit()
 
     def delete_task(self, task_id):
         result = QMessageBox.question(
@@ -206,8 +309,4 @@ class TaskPage(QWidget):
 
         if result == QMessageBox.Yes:
             self.task_service.delete_task(task_id)
-            self.refresh_tasks()
-
-    def toggle_highlight(self, task_id):
-        self.task_service.toggle_highlight(task_id)
-        self.refresh_tasks()
+            self.data_changed.emit()

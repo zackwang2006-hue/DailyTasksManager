@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -54,7 +54,7 @@ class CheckinPage(QWidget):
 
         self.task_scroll_area = QScrollArea()
         self.task_scroll_area.setWidgetResizable(True)
-        self.task_scroll_area.setFixedWidth(240)
+        self.task_scroll_area.setFixedWidth(280)
 
         self.task_container = QWidget()
         self.task_layout = QVBoxLayout(self.task_container)
@@ -95,7 +95,7 @@ class CheckinPage(QWidget):
 
         self.setStyleSheet("""
             QWidget {
-                background-color: #f5f5f5;
+                background-color: transparent;
             }
 
             QLabel#TitleLabel {
@@ -104,7 +104,7 @@ class CheckinPage(QWidget):
             }
 
             QFrame#PanelFrame {
-                background-color: white;
+                background-color: transparent;
                 border-radius: 10px;
                 padding: 8px;
             }
@@ -127,18 +127,18 @@ class CheckinPage(QWidget):
                 padding: 10px;
                 border: 1px solid #dddddd;
                 border-radius: 8px;
-                background-color: #ffffff;
+                background-color: transparent;
                 color: #222222;
                 text-align: left;
             }
 
             QPushButton#TaskButton:hover {
-                background-color: #eef5ff;
+                background-color: transparent;
             }
 
             QPushButton#TaskButton[selected="true"] {
                 border: 2px solid #2d8cff;
-                background-color: #eaf4ff;
+                background-color: transparent;
             }
 
             QLabel#DayCell {
@@ -149,21 +149,27 @@ class CheckinPage(QWidget):
             }
 
             QLabel#DayCell[status="done"] {
-                background-color: #e8f5e9;
+                background-color: transparent;
                 border: 1px solid #43a047;
                 color: #2e7d32;
             }
 
             QLabel#DayCell[status="missed"] {
-                background-color: #ffebee;
+                background-color: transparent;
                 border: 1px solid #e53935;
                 color: #c62828;
             }
 
             QLabel#DayCell[status="disabled"] {
-                background-color: #eeeeee;
+                background-color: transparent;
                 border: 1px solid #dddddd;
                 color: #888888;
+            }
+
+            QLabel#DayCell[status="normal"] {
+                background-color: transparent;
+                border: 1px solid #dddddd;
+                color: #222222;
             }
 
             QLabel#EmptyLabel {
@@ -295,11 +301,13 @@ class CheckinPage(QWidget):
             self.start_date_label.setText("")
             return
 
-        today = date.today()
+        now = datetime.now()
+        today = now.date()
         current_monday = today - timedelta(days=today.weekday())
         checkin_dates = self.checkin_service.get_checkin_dates_by_task(task.task_id)
         created_date = self.get_date_part(task.created_at)
-        start_date = self.get_task_start_date(created_date, checkin_dates)
+        available_date = self.get_task_available_date(task, created_date)
+        start_date = self.get_task_start_date(available_date, checkin_dates)
         streak_days = self.get_streak_days(checkin_dates, today)
 
         self.calendar_title.setText(f"{task.title} · 你已经坚持打卡 {streak_days} 天")
@@ -310,7 +318,14 @@ class CheckinPage(QWidget):
             for day_offset in range(7):
                 day = week_start + timedelta(days=day_offset)
                 date_str = day.isoformat()
-                status = self.get_day_status(day, date_str, created_date, checkin_dates, today)
+                status = self.get_day_status(
+                    day,
+                    date_str,
+                    created_date,
+                    available_date,
+                    checkin_dates,
+                    now,
+                )
 
                 cell = QLabel(day.strftime("%m-%d"))
                 cell.setObjectName("DayCell")
@@ -318,14 +333,21 @@ class CheckinPage(QWidget):
                 cell.setAlignment(Qt.AlignCenter)
                 self.calendar_grid.addWidget(cell, week_offset + 1, day_offset)
 
-    def get_task_start_date(self, created_date, checkin_dates):
-        if created_date:
-            return created_date
+    def get_task_start_date(self, available_date, checkin_dates):
+        if available_date:
+            return available_date
 
         if checkin_dates:
             return datetime.fromisoformat(min(checkin_dates)).date()
 
         return date.today()
+
+    def get_task_available_date(self, task, created_date):
+        scheduled_date = self.get_date_part(task.scheduled_at)
+        if created_date and scheduled_date:
+            return max(created_date, scheduled_date)
+
+        return scheduled_date or created_date
 
     def get_streak_days(self, checkin_dates, today):
         if not checkin_dates:
@@ -342,14 +364,22 @@ class CheckinPage(QWidget):
 
         return streak_days
 
-    def get_day_status(self, day, date_str, created_date, checkin_dates, today):
+    def get_day_status(self, day, date_str, created_date, available_date, checkin_dates, now):
         if date_str in checkin_dates:
             return "done"
 
+        today = now.date()
         if (created_date and day < created_date) or day > today:
             return "disabled"
 
-        return "missed"
+        if available_date and day < available_date:
+            return "disabled"
+
+        yesterday = today - timedelta(days=1)
+        if day == yesterday and now.time() >= time(4, 0):
+            return "missed"
+
+        return "normal"
 
     def get_date_part(self, value):
         try:

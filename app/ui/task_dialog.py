@@ -62,8 +62,7 @@ class TaskDialog(QDialog):
 
         self.scheduled_time_label = QLabel("定时时间")
         self.scheduled_time_input = QTimeEdit()
-        current_time = QTime.currentTime()
-        self.scheduled_time_input.setTime(QTime(current_time.hour(), current_time.minute()))
+        self.scheduled_time_input.setTime(QTime(23, 59))
         self.scheduled_time_input.setDisplayFormat("HH:mm")
 
         self.use_ddl_checkbox = QCheckBox("设置 DDL")
@@ -77,8 +76,9 @@ class TaskDialog(QDialog):
         self.ddl_datetime_input = QDateTimeEdit()
         self.ddl_datetime_input.setCalendarPopup(True)
         self.ddl_datetime_input.setDate(QDate.currentDate().addDays(1))
-        self.ddl_datetime_input.setTime(QTime(4, 0))
+        self.ddl_datetime_input.setTime(QTime(23, 59))
         self.ddl_datetime_input.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.apply_calendar_style()
 
         self.use_ddl_checkbox.stateChanged.connect(self.toggle_ddl_input)
 
@@ -124,10 +124,24 @@ class TaskDialog(QDialog):
         layout.addLayout(button_layout)
 
         self.setStyleSheet("""
+            QDialog {
+                background-color: #ffffff;
+                color: #222222;
+            }
+
+            QLabel, QCheckBox {
+                background-color: transparent;
+                color: #222222;
+            }
+
             QLineEdit, QTextEdit, QComboBox, QDateEdit, QDateTimeEdit, QTimeEdit {
                 padding: 6px;
                 border: 1px solid #cccccc;
                 border-radius: 6px;
+                background-color: #ffffff;
+                color: #222222;
+                selection-background-color: #dbeafe;
+                selection-color: #111111;
             }
 
             QPushButton {
@@ -142,6 +156,68 @@ class TaskDialog(QDialog):
                 background-color: #1f6fd1;
             }
         """)
+
+    def apply_calendar_style(self):
+        calendar_style = """
+            QCalendarWidget {
+                background-color: #ffffff;
+                color: #222222;
+            }
+
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: #f0f4f8;
+                color: #222222;
+            }
+
+            QCalendarWidget QToolButton {
+                background-color: transparent;
+                color: #222222;
+                border: none;
+                padding: 4px 8px;
+                font-weight: bold;
+            }
+
+            QCalendarWidget QToolButton:hover {
+                background-color: #dbeafe;
+                border-radius: 4px;
+            }
+
+            QCalendarWidget QMenu {
+                background-color: #ffffff;
+                color: #222222;
+                border: 1px solid #cccccc;
+            }
+
+            QCalendarWidget QSpinBox {
+                background-color: #ffffff;
+                color: #222222;
+                border: 1px solid #cccccc;
+                selection-background-color: #dbeafe;
+                selection-color: #111111;
+            }
+
+            QCalendarWidget QAbstractItemView {
+                background-color: #ffffff;
+                color: #222222;
+                selection-background-color: #2d8cff;
+                selection-color: #ffffff;
+                alternate-background-color: #ffffff;
+            }
+
+            QCalendarWidget QHeaderView::section {
+                background-color: #f8fafc;
+                color: #222222;
+                border: none;
+                padding: 4px;
+            }
+        """
+
+        for date_input in (
+            self.scheduled_date_input,
+            self.ddl_input,
+            self.ddl_datetime_input,
+        ):
+            date_input.calendarWidget().setStyleSheet(calendar_style)
 
     def keyPressEvent(self, event):
         """

@@ -18,6 +18,7 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
 
         self.init_ui()
+        self.apply_global_style()
 
     def init_ui(self):
         tab_widget = QTabWidget()
@@ -39,3 +40,54 @@ class MainWindow(QMainWindow):
         self.task_page.refresh_tasks()
         self.history_page.refresh_page()
         self.checkin_page.refresh_page()
+
+    def apply_global_style(self):
+        self.setStyleSheet("""
+            QLabel, QCheckBox {
+                background-color: transparent;
+                color: #222222;
+            }
+
+            QLineEdit, QTextEdit, QPlainTextEdit, QComboBox,
+            QDateEdit, QDateTimeEdit, QTimeEdit, QSpinBox {
+                background-color: transparent;
+                color: #222222;
+                border: 1px solid #cccccc;
+                border-radius: 6px;
+                selection-background-color: transparent;
+                selection-color: #111111;
+            }
+
+            QPushButton {
+                color: #222222;
+                border: 1px solid #cccccc;
+            }
+
+            QCalendarWidget {
+                background-color: transparent;
+                color: #222222;
+            }
+
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: transparent;
+                color: #222222;
+            }
+
+            QCalendarWidget QToolButton {
+                background-color: transparent;
+                color: #222222;
+            }
+
+            QCalendarWidget QAbstractItemView {
+                background-color: transparent;
+                color: #222222;
+                selection-background-color: transparent;
+                selection-color: #ffffff;
+            }
+
+            QCalendarWidget QHeaderView::section {
+                background-color: transparent;
+                color: #222222;
+                border: none;
+            }
+        """)

@@ -6,9 +6,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal
-
 from app.models.task import Task
 from app.ui.task_colors import get_short_task_ddl_status, get_task_card_color
 
@@ -38,9 +38,11 @@ class TaskCard(QFrame):
         self.title_label = QLabel(self.task.title)
         self.title_label.setObjectName("TaskTitle")
 
+
         title_layout.addWidget(self.title_label)
+
         if self.is_timed_task():
-            self.timed_label = QLabel("⏰ 定时任务")
+            self.timed_label = QLabel("定时任务")
             self.timed_label.setObjectName("TimedLabel")
             title_layout.addWidget(self.timed_label)
 
@@ -66,14 +68,21 @@ class TaskCard(QFrame):
         self.complete_button.clicked.connect(self.on_complete_clicked)
         self.delete_button.clicked.connect(self.on_delete_clicked)
 
+        for button in (self.edit_button, self.complete_button, self.delete_button):
+            button.setMinimumWidth(80)
+            button.setMinimumHeight(50)
+
         button_layout.addStretch()
         button_layout.addWidget(self.edit_button)
         button_layout.addWidget(self.complete_button)
         button_layout.addWidget(self.delete_button)
 
         main_layout.addLayout(title_layout)
+        main_layout.addStretch()
         main_layout.addWidget(self.description_label)
+        main_layout.addStretch()
         main_layout.addWidget(self.ddl_label)
+        main_layout.addStretch()
         main_layout.addWidget(self.button_widget)
 
         self.set_expanded(False)
@@ -164,6 +173,17 @@ class TaskCard(QFrame):
         self.is_expanded = expanded
         self.description_label.setVisible(expanded)
         self.button_widget.setVisible(expanded)
+
+        self.setMaximumHeight(16777215)
+        self.layout().invalidate()
+        self.updateGeometry()
+        self.adjustSize()
+
+        parent = self.parent()
+        if parent is not None:
+            if parent.layout() is not None:
+                parent.layout().invalidate()
+            parent.updateGeometry()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

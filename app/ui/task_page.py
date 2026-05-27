@@ -47,28 +47,45 @@ class TaskGridSection(QFrame):
         self.setFixedWidth(width)
         self.reflow_cards()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.reflow_cards()
-
-    def reflow_cards(self):
+    def reflow_cards(self, force=False):
         available_width = max(1, self.available_width or self.width())
         margins = self.grid_layout.contentsMargins()
         usable_width = max(1, available_width - margins.left() - margins.right())
+
+        min_card_width = self.card_width
         column_width = self.card_width + self.card_spacing
+
         columns = max(1, (usable_width + self.card_spacing) // column_width)
 
-        if columns == self.column_count and self.grid_layout.count() == len(self.cards):
+        total_spacing = self.card_spacing * (columns - 1)
+        actual_card_width = max(
+            min_card_width,
+            (usable_width - total_spacing) // columns
+        )
+
+        if (
+                not force
+                and columns == self.column_count
+                and self.grid_layout.count() == len(self.cards)
+                and getattr(self, "actual_card_width", None) == actual_card_width
+        ):
             return
 
         self.column_count = columns
+        self.actual_card_width = actual_card_width
+
         while self.grid_layout.count():
             self.grid_layout.takeAt(0)
 
         for index, card in enumerate(self.cards):
+            card.setFixedWidth(actual_card_width)
+
             row = index // columns
             column = index % columns
             self.grid_layout.addWidget(card, row, column, Qt.AlignTop)
+
+        self.grid_layout.invalidate()
+        self.updateGeometry()
 
 
 class TaskPage(QWidget):
@@ -117,7 +134,7 @@ class TaskPage(QWidget):
 
         self.setStyleSheet("""
             QWidget {
-                background-color: #f5f5f5;
+                background-color: transparent;
             }
 
             QLabel#TitleLabel {
@@ -263,10 +280,21 @@ class TaskPage(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
+    def relayout_task_cards(self):
+        for section in self.grid_sections:
+            if hasattr(section, "reflow_cards"):
+                section.reflow_cards(force=True)
+            section.updateGeometry()
+
+        self.task_container.layout().invalidate()
+        self.task_container.updateGeometry()
+        self.scroll_area.widget().adjustSize()
+
     def toggle_task_card(self, task_card):
         if self.expanded_task_card is task_card:
             task_card.set_expanded(False)
             self.expanded_task_card = None
+            self.relayout_task_cards()
             return
 
         if self.expanded_task_card is not None:
@@ -274,6 +302,7 @@ class TaskPage(QWidget):
 
         task_card.set_expanded(True)
         self.expanded_task_card = task_card
+        self.relayout_task_cards()
 
     def complete_task(self, task_id):
         self.task_service.complete_task(task_id)

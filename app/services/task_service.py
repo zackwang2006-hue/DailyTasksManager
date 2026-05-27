@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time, timedelta
 
 from app.database.db_manager import DBManager
 from app.models.task import Task
@@ -46,6 +46,8 @@ class TaskService:
         )
 
     def get_uncompleted_tasks(self):
+        self.refresh_daily_tasks()
+
         sql = """
         SELECT *
         FROM tasks
@@ -91,6 +93,8 @@ class TaskService:
         return [Task.from_row(row) for row in rows]
 
     def get_tasks_by_category(self, category):
+        self.refresh_daily_tasks()
+
         sql = """
         SELECT *
         FROM tasks
@@ -129,7 +133,9 @@ class TaskService:
         self.history_service.add_task_log(task)
 
         if task.task_type == "daily" or task.category == "daily":
-            checkin_date = datetime.fromisoformat(completed_at).date().isoformat()
+            checkin_date = self.get_daily_cycle_date(
+                datetime.fromisoformat(completed_at)
+            ).isoformat()
             self.checkin_service.add_daily_checkin(
                 task.task_id,
                 checkin_date,
@@ -137,6 +143,8 @@ class TaskService:
             )
 
     def get_daily_tasks(self):
+        self.refresh_daily_tasks()
+
         sql = """
         SELECT *
         FROM tasks
@@ -147,6 +155,35 @@ class TaskService:
 
         rows = self.db.fetch_all(sql)
         return [Task.from_row(row) for row in rows]
+
+    def refresh_daily_tasks(self, now=None):
+        now = now or datetime.now()
+        cycle_date = self.get_daily_cycle_date(now).isoformat()
+
+        sql = """
+        UPDATE tasks
+        SET is_completed = 0,
+            completed_at = NULL
+        WHERE (task_type = 'daily' OR category = 'daily')
+          AND is_completed = 1
+          AND COALESCE(is_deleted, 0) = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM daily_checkins
+              WHERE daily_checkins.task_id = tasks.id
+                AND daily_checkins.checkin_date = ?
+                AND daily_checkins.is_completed = 1
+          )
+        """
+
+        self.db.execute(sql, (cycle_date,))
+
+    def get_daily_cycle_date(self, value):
+        current_day = value.date()
+        if value.time() < time(4, 0):
+            return current_day - timedelta(days=1)
+
+        return current_day
 
     def delete_task(self, task_id):
         task = self.get_task_by_id(task_id)

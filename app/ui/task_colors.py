@@ -33,7 +33,7 @@ def get_task_card_color(task):
         return "#42a5f5", "#eaf4ff", "#1976d2"
 
     if task.category == "extra":
-        return "#9e9e9e", "#f5f5f5", "#666666"
+        return "#9e9e9e", "transparent", "#666666"
 
     if task.category == "long":
         return "#43a047", "#f0fff4", "#2e7d32"

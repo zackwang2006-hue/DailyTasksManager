@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -59,6 +60,10 @@ class HistoryPage(QWidget):
         self.detail_title = QLabel()
         self.detail_title.setObjectName("DetailTitle")
 
+        self.detail_frame = QFrame()
+        self.detail_frame.setObjectName("DetailFrame")
+        detail_layout = QVBoxLayout(self.detail_frame)
+
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
 
@@ -67,14 +72,22 @@ class HistoryPage(QWidget):
         self.log_layout.setAlignment(Qt.AlignTop)
         self.scroll_area.setWidget(self.log_container)
 
+        detail_layout.addWidget(self.detail_title)
+        detail_layout.addWidget(self.scroll_area)
+
+        self.splitter = QSplitter(Qt.Vertical)
+        self.splitter.addWidget(self.calendar_frame)
+        self.splitter.addWidget(self.detail_frame)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 2)
+        self.splitter.setSizes([260, 360])
+
         main_layout.addWidget(title_label)
-        main_layout.addWidget(self.calendar_frame)
-        main_layout.addWidget(self.detail_title)
-        main_layout.addWidget(self.scroll_area)
+        main_layout.addWidget(self.splitter, 1)
 
         self.setStyleSheet("""
             QWidget {
-                background-color: #f5f5f5;
+                background-color: transparent;
             }
 
             QLabel#TitleLabel {
@@ -86,6 +99,10 @@ class HistoryPage(QWidget):
                 background-color: white;
                 border-radius: 10px;
                 padding: 8px;
+            }
+
+            QFrame#DetailFrame {
+                background-color: transparent;
             }
 
             QLabel#WeekdayLabel {
@@ -176,6 +193,12 @@ class HistoryPage(QWidget):
 
             QScrollArea {
                 border: none;
+            }
+
+            QSplitter::handle:vertical {
+                background-color: #d9d9d9;
+                height: 6px;
+                margin: 4px 0;
             }
         """)
 

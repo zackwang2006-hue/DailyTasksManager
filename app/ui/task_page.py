@@ -122,6 +122,8 @@ class TaskPage(QWidget):
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self.task_container = QWidget()
         self.task_layout = QVBoxLayout(self.task_container)
@@ -176,6 +178,41 @@ class TaskPage(QWidget):
                 background-color: white;
                 border-radius: 12px;
                 padding: 8px;
+            }
+            QScrollBar:vertical {
+                width: 10px;
+                background: transparent;
+                margin: 4px 2px 4px 2px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: #d1d5db;
+                border-radius: 5px;
+                min-height: 40px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background: #9ca3af;
+            }
+            
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: transparent;
+            }
+            
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+            
+            QScrollBar:horizontal {
+                height: 0px;
+                background: transparent;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background: transparent;
             }
         """)
 

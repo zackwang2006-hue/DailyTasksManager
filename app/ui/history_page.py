@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
+from PySide6.QtCore import Qt, QTimer
 from app.services.history_service import HistoryService
 
 
@@ -52,20 +52,35 @@ class HistoryPage(QWidget):
         title_label = QLabel("历史完成")
         title_label.setObjectName("TitleLabel")
 
+        self.calendar_scroll_area = QScrollArea()
+        self.calendar_scroll_area.setWidgetResizable(True)
+        self.calendar_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.calendar_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.calendar_scroll_area.setMaximumHeight(420)
+
         self.calendar_frame = QFrame()
         self.calendar_frame.setObjectName("CalendarFrame")
         self.calendar_layout = QGridLayout(self.calendar_frame)
         self.calendar_layout.setSpacing(8)
+        self.calendar_layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+
+        self.calendar_scroll_area.setWidget(self.calendar_frame)
 
         self.detail_title = QLabel()
         self.detail_title.setObjectName("DetailTitle")
 
         self.detail_frame = QFrame()
         self.detail_frame.setObjectName("DetailFrame")
+        self.detail_frame.setMinimumHeight(180)
+
         detail_layout = QVBoxLayout(self.detail_frame)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(8)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self.log_container = QWidget()
         self.log_layout = QVBoxLayout(self.log_container)
@@ -76,11 +91,18 @@ class HistoryPage(QWidget):
         detail_layout.addWidget(self.scroll_area)
 
         self.splitter = QSplitter(Qt.Vertical)
-        self.splitter.addWidget(self.calendar_frame)
+        self.splitter.setHandleWidth(8)
+
+        self.splitter.addWidget(self.calendar_scroll_area)
         self.splitter.addWidget(self.detail_frame)
+
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setCollapsible(0, False)
+        self.splitter.setCollapsible(1, False)
+
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 2)
-        self.splitter.setSizes([260, 360])
+        self.splitter.setSizes([320, 360])
 
         main_layout.addWidget(title_label)
         main_layout.addWidget(self.splitter, 1)
@@ -200,9 +222,86 @@ class HistoryPage(QWidget):
                 height: 6px;
                 margin: 4px 0;
             }
+            
+            QScrollBar:vertical {
+                width: 10px;
+                background: transparent;
+                margin: 4px 2px 4px 2px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: #d1d5db;
+                border-radius: 5px;
+                min-height: 40px;
+            }
+            
+            QScrollBar::handle:vertical:hover {
+                background: #9ca3af;
+            }
+            
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: transparent;
+            }
+            
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+            
+            QScrollBar:horizontal {
+                height: 0px;
+                background: transparent;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background: transparent;
+            }
+            
+            QSplitter::handle:vertical {
+                background-color: #e5e7eb;
+                height: 8px;
+                margin: 8px 0px;
+                border-radius: 4px;
+            }
+            
+            QSplitter::handle:vertical:hover {
+                background-color: #cbd5e1;
+            }
         """)
 
+    def get_day_button_size(self):
+        columns = 7
+        spacing = self.calendar_layout.spacing()
+
+        # 用页面整体宽度，不用 scroll_area.viewport().width()
+        base_width = self.width()
+
+        # 扣掉页面边距、日历左右边距、列间距
+        margins = self.calendar_layout.contentsMargins()
+        usable_width = (
+                base_width
+                - margins.left()
+                - margins.right()
+                - spacing * (columns - 1)
+                - 48
+        )
+
+        button_width = usable_width // columns
+
+        # 限制范围：不会太窄，也不会被拉得过宽
+        button_width = max(90, min(150, button_width))
+        button_height = 72
+
+        return button_width, button_height
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self.refresh_calendar)
+
     def refresh_calendar(self):
+        day_button_width, day_button_height = self.get_day_button_size()
         self.clear_layout(self.calendar_layout)
         self.day_buttons = {}
 
@@ -211,7 +310,8 @@ class HistoryPage(QWidget):
             label = QLabel(weekday)
             label.setObjectName("WeekdayLabel")
             label.setAlignment(Qt.AlignCenter)
-            self.calendar_layout.addWidget(label, 0, col)
+            label.setFixedWidth(day_button_width)
+            self.calendar_layout.addWidget(label, 0, col, Qt.AlignCenter)
 
         today = date.today()
         if self.selected_date > today.isoformat():
@@ -242,6 +342,7 @@ class HistoryPage(QWidget):
 
                 button = QPushButton(text)
                 button.setObjectName("DayButton")
+                button.setFixedSize(day_button_width, day_button_height)
                 button.setProperty("status", self.get_day_status(day, count, today))
                 button.setProperty("selected", date_str == self.selected_date)
                 button.setContextMenuPolicy(Qt.NoContextMenu)
@@ -253,7 +354,7 @@ class HistoryPage(QWidget):
                     )
 
                 self.day_buttons[date_str] = button
-                self.calendar_layout.addWidget(button, week_offset + 1, day_offset)
+                self.calendar_layout.addWidget(button, week_offset + 1, day_offset, Qt.AlignCenter)
 
     def get_day_status(self, day, count, today):
         if day > today:

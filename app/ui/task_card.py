@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, time
 
 from PySide6.QtWidgets import (
     QFrame,
@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from app.models.task import Task
 from app.ui.task_colors import get_short_task_ddl_status, get_task_card_color
+from app.utils.time_utils import format_task_time
 
 
 class TaskCard(QFrame):
@@ -88,33 +89,32 @@ class TaskCard(QFrame):
         self.set_expanded(False)
 
     def get_ddl_text(self):
+        if self.task.task_type == "daily" or self.task.category == "daily":
+            daily_due = datetime.combine(date.today(), time(23, 59))
+            return f"截止时间：{format_task_time(daily_due)}"
+
         if not self.task.ddl:
-            return "DDL：未设置"
+            return "截止时间：未设置"
 
         status = self.get_ddl_status()
 
         if status == "expired":
-            return f"DDL：{self.task.ddl}（已过期）"
+            return f"截止时间：{format_task_time(self.task.ddl)}（已过期）"
         elif status == "urgent":
-            return f"DDL：{self.format_datetime(self.task.ddl)}（紧急）"
+            return f"截止时间：{format_task_time(self.task.ddl)}（紧急）"
         elif status == "soon":
-            return f"DDL：{self.format_datetime(self.task.ddl)}（较近）"
+            return f"截止时间：{format_task_time(self.task.ddl)}（较近）"
         else:
-            return f"DDL：{self.format_datetime(self.task.ddl)}（充足）"
+            return f"截止时间：{format_task_time(self.task.ddl)}（充足）"
 
     def is_timed_task(self):
-        return self.task.task_type == "timed"
+        return self.task.task_type == "timed" or self.task.category == "timed"
 
     def get_scheduled_text(self):
         if not self.task.scheduled_at:
-            return "定时：未设置"
+            return "时间：未设置"
 
-        try:
-            scheduled_at = datetime.fromisoformat(self.task.scheduled_at)
-        except ValueError:
-            return f"定时：{self.task.scheduled_at}"
-
-        return f"定时：{scheduled_at.strftime('%Y-%m-%d %H:%M')}"
+        return f"时间：{format_task_time(self.task.scheduled_at)}"
 
     def get_ddl_status(self):
         if self.task.category == "short":
@@ -123,7 +123,7 @@ class TaskCard(QFrame):
         return "safe" if self.task.ddl else "none"
 
     def apply_style(self):
-        border_color, background_color, ddl_color = get_task_card_color(self.task)
+        border_color, background_color, text_color = get_task_card_color(self.task)
 
         self.setStyleSheet(f"""
             QFrame#TaskCard {{
@@ -137,22 +137,23 @@ class TaskCard(QFrame):
             QLabel#TaskTitle {{
                 font-size: 16px;
                 font-weight: bold;
+                color: {text_color};
                 background-color: transparent;
             }}
 
             QLabel#TaskDescription {{
-                color: #444444;
+                color: {text_color};
                 background-color: transparent;
             }}
 
             QLabel#DDLLabel {{
-                color: {ddl_color};
+                color: {text_color};
                 font-weight: bold;
                 background-color: transparent;
             }}
 
             QLabel#TimedLabel {{
-                color: #5e35b1;
+                color: {text_color};
                 font-weight: bold;
                 background-color: transparent;
             }}
@@ -198,12 +199,3 @@ class TaskCard(QFrame):
 
     def on_edit_clicked(self):
         self.edit_requested.emit(self.task.task_id)
-
-    def format_datetime(self, value):
-        if value and len(value) <= 10:
-            return value
-
-        try:
-            return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M")
-        except (TypeError, ValueError):
-            return value

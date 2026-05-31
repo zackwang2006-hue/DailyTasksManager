@@ -1,4 +1,7 @@
+from datetime import datetime
+
 from app.database.db_manager import DBManager
+from app.utils.time_utils import get_business_date
 
 
 class HistoryService:
@@ -9,10 +12,12 @@ class HistoryService:
         sql = """
         INSERT INTO task_logs (
             task_id, title, description, category, task_type,
-            ddl, scheduled_at, completed_at, created_at
+            ddl, scheduled_at, completed_at, record_date, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
+        completed_at = datetime.fromisoformat(task.completed_at)
+        record_date = get_business_date(completed_at).isoformat()
 
         return self.db.execute(
             sql,
@@ -25,6 +30,7 @@ class HistoryService:
                 task.ddl,
                 task.scheduled_at,
                 task.completed_at,
+                record_date,
                 task.created_at,
             ),
         )
@@ -33,7 +39,7 @@ class HistoryService:
         sql = """
         SELECT *
         FROM task_logs
-        WHERE date(completed_at) = ?
+        WHERE COALESCE(record_date, date(completed_at)) = ?
         ORDER BY completed_at DESC
         """
 
@@ -43,7 +49,7 @@ class HistoryService:
         sql = """
         SELECT *
         FROM task_logs
-        WHERE date(completed_at) BETWEEN ? AND ?
+        WHERE COALESCE(record_date, date(completed_at)) BETWEEN ? AND ?
         ORDER BY completed_at DESC
         """
 

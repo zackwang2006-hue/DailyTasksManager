@@ -216,8 +216,8 @@ class TaskPage(QWidget):
             }
         """)
 
-    def open_add_task_dialog(self):
-        dialog = TaskDialog(parent=self)
+    def open_add_task_dialog(self, parent=None):
+        dialog = TaskDialog(parent=parent or self)
 
         if dialog.exec():
             data = dialog.get_task_data()
@@ -366,12 +366,25 @@ class TaskPage(QWidget):
             self.data_changed.emit()
 
     def delete_task(self, task_id):
-        result = QMessageBox.question(
-            self,
-            "确认删除",
-            "确定要删除这个任务吗？",
-            QMessageBox.Yes | QMessageBox.No,
-        )
+        message_box = QMessageBox(self)
+        message_box.setWindowTitle("确认删除")
+        message_box.setText("确定要删除这个任务吗？")
+        message_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        message_box.button(QMessageBox.Yes).setText("确定")
+        message_box.button(QMessageBox.No).setText("取消")
+        message_box.setDefaultButton(QMessageBox.No)
+        message_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #ffffff;
+                color: #222222;
+            }
+
+            QMessageBox QLabel {
+                background-color: transparent;
+                color: #222222;
+            }
+        """)
+        result = message_box.exec()
 
         if result == QMessageBox.Yes:
             self.task_service.delete_task(task_id)

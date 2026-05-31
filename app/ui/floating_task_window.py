@@ -11,6 +11,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (
 from app.config import APP_NAME, TASK_CATEGORIES
 from app.services.task_service import TaskService
 from app.ui.task_colors import get_task_card_color
-from app.utils.time_utils import format_task_time
+from app.utils.time_utils import format_task_time, get_daily_default_deadline, is_task_overdue
 
 
 FILTER_ALL = "all"
@@ -101,6 +102,8 @@ class FloatingTaskItem(QFrame):
     complete_requested = Signal(int)
     pin_requested = Signal(int)
     expanded_changed = Signal()
+    interaction_started = Signal()
+    interaction_finished = Signal()
 
     def __init__(self, task, time_text, category_text, allow_pin=False, is_pinned=False, parent=None):
         super().__init__(parent)
@@ -239,8 +242,13 @@ class FloatingTaskItem(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            self.interaction_started.emit()
             self.set_expanded(not self.is_expanded)
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.interaction_finished.emit()
+        super().mouseReleaseEvent(event)
 
     def set_expanded(self, expanded):
         self.is_expanded = expanded
@@ -274,6 +282,9 @@ class FloatingTaskWindow(QWidget):
         self.move_animation.setDuration(180)
         self.move_animation.setEasingCurve(QEasingCurve.OutCubic)
         self.context_menu_open = False
+        self._reposition_pending = False
+        self._mouse_inside = False
+        self._interacting_inside = False
 
         self.setWindowTitle("任务清单")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
@@ -468,7 +479,7 @@ class FloatingTaskWindow(QWidget):
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
-            self.cancel_auto_hide_timer()
+            self.begin_internal_interaction()
             self.stop_move_animation()
             if self.is_auto_hidden:
                 self.show_from_auto_hide(animated=False)
@@ -484,9 +495,26 @@ class FloatingTaskWindow(QWidget):
             self.drag_start_pos = None
             self.apply_edge_snap()
             self.save_settings()
+            self.end_internal_interaction()
             event.accept()
             return True
         return super().eventFilter(watched, event)
+
+    def is_cursor_inside_window(self) -> bool:
+        return self.frameGeometry().contains(QCursor.pos())
+
+    def begin_internal_interaction(self) -> None:
+        self._mouse_inside = True
+        self._interacting_inside = True
+        self.cancel_auto_hide_timer()
+        if self.is_auto_hidden:
+            self.show_from_auto_hide(animated=False)
+
+    def end_internal_interaction(self) -> None:
+        self._interacting_inside = False
+        self._mouse_inside = self.is_cursor_inside_window()
+        if not self._mouse_inside:
+            self.schedule_auto_hide()
 
     def get_current_screen_available_geometry(self):
         screen = QApplication.screenAt(self.frameGeometry().center())
@@ -534,6 +562,55 @@ class FloatingTaskWindow(QWidget):
 
         window_rect = self.frameGeometry()
         x, y = self.clamp_normal_position(window_rect.x(), window_rect.y())
+        if x != window_rect.x() or y != window_rect.y():
+            self.move(x, y)
+
+    def schedule_reposition_after_resize(self):
+        if self._reposition_pending:
+            return
+        self._reposition_pending = True
+        QTimer.singleShot(0, self.reposition_after_resize)
+
+    def reposition_after_resize(self):
+        self._reposition_pending = False
+        self.stop_move_animation()
+
+        if self.is_auto_hidden:
+            self.apply_auto_hide()
+            return
+
+        screen_rect = self.get_current_screen_available_geometry()
+        if screen_rect is None:
+            return
+
+        window_rect = self.frameGeometry()
+        x = window_rect.x()
+        y = window_rect.y()
+        min_x = screen_rect.x()
+        min_y = screen_rect.y()
+        max_x = max(min_x, screen_rect.x() + screen_rect.width() - window_rect.width())
+        max_y = max(min_y, screen_rect.y() + screen_rect.height() - window_rect.height())
+
+        if self.snap_edge == "left":
+            x = min_x
+        elif self.snap_edge == "right":
+            x = max_x
+        elif self.snap_edge == "top":
+            y = min_y
+        elif self.snap_edge == "bottom":
+            y = max_y
+
+        if self.snap_corner in {"left_top", "left_bottom"}:
+            x = min_x
+        elif self.snap_corner in {"right_top", "right_bottom"}:
+            x = max_x
+
+        if self.snap_corner in {"left_top", "right_top"}:
+            y = min_y
+        elif self.snap_corner in {"left_bottom", "right_bottom"}:
+            y = max_y
+
+        x, y = self.clamp_normal_position(x, y, screen_rect)
         if x != window_rect.x() or y != window_rect.y():
             self.move(x, y)
 
@@ -634,7 +711,11 @@ class FloatingTaskWindow(QWidget):
             not self.should_auto_hide_after_snap()
             or self.drag_start_pos is not None
             or self.context_menu_open
+            or self._interacting_inside
+            or self._mouse_inside
+            or self.is_cursor_inside_window()
         ):
+            self.cancel_auto_hide_timer()
             return
 
         screen_rect = self.get_current_screen_available_geometry()
@@ -686,7 +767,14 @@ class FloatingTaskWindow(QWidget):
 
     def schedule_auto_hide(self) -> None:
         """鼠标离开后延迟半隐藏。"""
-        if self.should_auto_hide_after_snap() and self.drag_start_pos is None and not self.context_menu_open:
+        if (
+            self.should_auto_hide_after_snap()
+            and self.drag_start_pos is None
+            and not self.context_menu_open
+            and not self._mouse_inside
+            and not self._interacting_inside
+            and not self.is_cursor_inside_window()
+        ):
             self.auto_hide_timer.start(AUTO_HIDE_DELAY_MS)
 
     def cancel_auto_hide_timer(self) -> None:
@@ -805,6 +893,7 @@ class FloatingTaskWindow(QWidget):
 
         self.task_layout.addStretch()
         self.update_collapsed_text()
+        self.schedule_reposition_after_resize()
 
     def add_grouped_tasks(self, tasks):
         grouped = {key: [] for key, _ in SECTION_ORDER}
@@ -836,13 +925,15 @@ class FloatingTaskWindow(QWidget):
         item.complete_requested.connect(self.complete_task)
         item.pin_requested.connect(self.toggle_task_pinned)
         item.expanded_changed.connect(self.handle_task_item_expanded)
+        item.interaction_started.connect(self.begin_internal_interaction)
+        item.interaction_finished.connect(self.end_internal_interaction)
         self.task_layout.addWidget(item)
 
     def handle_task_item_expanded(self):
-        self.cancel_auto_hide_timer()
+        self.begin_internal_interaction()
         if self.is_auto_hidden:
             self.show_from_auto_hide()
-        self.ensure_inside_screen()
+        self.schedule_reposition_after_resize()
 
     def clear_task_layout(self):
         while self.task_layout.count():
@@ -911,7 +1002,12 @@ class FloatingTaskWindow(QWidget):
 
     def get_task_due_datetime(self, task):
         if task.task_type == "daily" or task.category == "daily":
-            return datetime.combine(date.today(), time(23, 59))
+            if task.ddl:
+                try:
+                    return datetime.fromisoformat(str(task.ddl))
+                except ValueError:
+                    return get_daily_default_deadline()
+            return get_daily_default_deadline()
 
         value = task.scheduled_at if task.task_type == "timed" or task.category == "timed" else task.ddl
         if not value:
@@ -932,6 +1028,9 @@ class FloatingTaskWindow(QWidget):
                 return None
 
     def format_time_text(self, task, due_value):
+        if is_task_overdue(task):
+            return "已过期"
+
         if task.task_type == "timed" or task.category == "timed":
             if due_value is None:
                 return "时间：未设置"
@@ -988,7 +1087,7 @@ class FloatingTaskWindow(QWidget):
         self.cancel_auto_hide_timer()
         self.is_collapsed = not self.is_collapsed
         self.apply_collapsed_state()
-        self.ensure_inside_screen()
+        self.reposition_after_resize()
         if was_auto_hidden and self.should_auto_hide_after_snap():
             self.apply_auto_hide()
         self.save_settings()
@@ -1010,6 +1109,11 @@ class FloatingTaskWindow(QWidget):
             self.setMinimumHeight(300)
             self.setMaximumHeight(16777215)
             self.resize(max(self.width(), 360), 460)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.drag_start_pos is None:
+            self.schedule_reposition_after_resize()
 
     def toggle_window_pinned(self):
         self.is_window_pinned = not self.is_window_pinned
@@ -1080,24 +1184,31 @@ class FloatingTaskWindow(QWidget):
         return max(OPACITY_MIN, min(OPACITY_MAX, opacity))
 
     def contextMenuEvent(self, event):
-        self.cancel_auto_hide_timer()
+        self.begin_internal_interaction()
         if self.is_auto_hidden:
             self.show_from_auto_hide()
         self.context_menu_open = True
         self.create_actions_menu().exec(event.globalPos())
         self.context_menu_open = False
-        if not self.underMouse():
-            self.schedule_auto_hide()
+        self.end_internal_interaction()
 
     def enterEvent(self, event):
+        self._mouse_inside = True
         self.cancel_auto_hide_timer()
         if self.is_auto_hidden:
             self.show_from_auto_hide()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.schedule_auto_hide()
+        QTimer.singleShot(0, self.handle_possible_mouse_leave)
         super().leaveEvent(event)
+
+    def handle_possible_mouse_leave(self):
+        self._mouse_inside = self.is_cursor_inside_window()
+        if self._mouse_inside or self._interacting_inside or self.context_menu_open:
+            self.cancel_auto_hide_timer()
+            return
+        self.schedule_auto_hide()
 
     def mouseDoubleClickEvent(self, event):
         if self.is_collapsed and event.button() == Qt.LeftButton:

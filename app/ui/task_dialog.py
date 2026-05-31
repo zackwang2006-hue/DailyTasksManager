@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import (
+    QCalendarWidget,
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
@@ -14,8 +15,53 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 from PySide6.QtCore import QDate, QDateTime, QTime, Qt
+from PySide6.QtGui import QColor, QPen
 
 from app.config import TASK_CATEGORIES
+from app.utils.time_utils import get_daily_default_deadline
+
+
+class CurrentMonthCalendar(QCalendarWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._shown_year = self.yearShown()
+        self._shown_month = self.monthShown()
+        self._last_valid_date = self.selectedDate()
+        self._restoring_selection = False
+        self.currentPageChanged.connect(self.on_current_page_changed)
+        self.selectionChanged.connect(self.keep_selection_in_current_month)
+
+    def on_current_page_changed(self, year, month):
+        self._shown_year = year
+        self._shown_month = month
+        self.updateCells()
+
+    def is_in_current_page(self, date):
+        return date.year() == self._shown_year and date.month() == self._shown_month
+
+    def keep_selection_in_current_month(self):
+        if self._restoring_selection:
+            return
+
+        selected_date = self.selectedDate()
+        if self.is_in_current_page(selected_date):
+            self._last_valid_date = selected_date
+            return
+
+        self._restoring_selection = True
+        self.setSelectedDate(self._last_valid_date)
+        self._restoring_selection = False
+
+    def paintCell(self, painter, rect, date):
+        if self.is_in_current_page(date):
+            super().paintCell(painter, rect, date)
+            return
+
+        painter.save()
+        painter.fillRect(rect, QColor("#f3f4f6"))
+        painter.setPen(QPen(QColor("#b6bcc6")))
+        painter.drawText(rect, Qt.AlignCenter, str(date.day()))
+        painter.restore()
 
 
 class TaskDialog(QDialog):
@@ -23,8 +69,10 @@ class TaskDialog(QDialog):
         super().__init__(parent)
 
         self.task = task
+        self._applying_deadline_default = False
+        self._deadline_manually_changed = False
         self.setWindowTitle("编辑任务" if task else "新增任务")
-        self.resize(420, 460)
+        self.resize(420, 390)
 
         self.init_ui()
         self.load_task_data()
@@ -41,6 +89,7 @@ class TaskDialog(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setPlaceholderText("请输入任务描述，可不填")
+        self.description_input.setFixedHeight(105)
 
         self.category_combo = QComboBox()
         self.category_combo.addItem("请选择任务类型", None)
@@ -48,7 +97,7 @@ class TaskDialog(QDialog):
         for key, name in TASK_CATEGORIES.items():
             self.category_combo.addItem(name, key)
 
-        self.category_combo.currentIndexChanged.connect(self.update_ddl_rule)
+        self.category_combo.currentIndexChanged.connect(self.on_category_changed)
 
         self.is_timed_checkbox = QCheckBox("这是定时任务")
         self.is_timed_checkbox.hide()
@@ -57,6 +106,7 @@ class TaskDialog(QDialog):
         self.scheduled_date_label = QLabel("定时日期")
         self.scheduled_date_input = QDateEdit()
         self.scheduled_date_input.setCalendarPopup(True)
+        self.scheduled_date_input.setCalendarWidget(CurrentMonthCalendar(self.scheduled_date_input))
         self.scheduled_date_input.setDate(QDate.currentDate().addDays(1))
         self.scheduled_date_input.setDisplayFormat("yyyy-MM-dd")
 
@@ -70,14 +120,17 @@ class TaskDialog(QDialog):
 
         self.ddl_input = QDateEdit()
         self.ddl_input.setCalendarPopup(True)
+        self.ddl_input.setCalendarWidget(CurrentMonthCalendar(self.ddl_input))
         self.ddl_input.setDate(QDate.currentDate().addDays(1))
         self.ddl_input.setDisplayFormat("yyyy-MM-dd")
 
         self.ddl_datetime_input = QDateTimeEdit()
         self.ddl_datetime_input.setCalendarPopup(True)
+        self.ddl_datetime_input.setCalendarWidget(CurrentMonthCalendar(self.ddl_datetime_input))
         self.ddl_datetime_input.setDate(QDate.currentDate().addDays(1))
         self.ddl_datetime_input.setTime(QTime(23, 59))
         self.ddl_datetime_input.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.ddl_datetime_input.dateTimeChanged.connect(self.on_deadline_changed)
         self.apply_calendar_style()
 
         self.use_ddl_checkbox.stateChanged.connect(self.toggle_ddl_input)
@@ -237,6 +290,38 @@ class TaskDialog(QDialog):
 
         super().keyPressEvent(event)
 
+    def on_deadline_changed(self):
+        if not self._applying_deadline_default:
+            self._deadline_manually_changed = True
+
+    def set_deadline_datetime(self, q_datetime):
+        self._applying_deadline_default = True
+        self.ddl_datetime_input.setDateTime(q_datetime)
+        self._applying_deadline_default = False
+
+    def set_daily_default_deadline(self):
+        default_deadline = get_daily_default_deadline()
+        self.set_deadline_datetime(
+            QDateTime(
+                QDate(default_deadline.year, default_deadline.month, default_deadline.day),
+                QTime(default_deadline.hour, default_deadline.minute),
+            )
+        )
+
+    def set_short_default_deadline(self):
+        self.set_deadline_datetime(
+            QDateTime(QDate.currentDate().addDays(1), QTime(23, 59))
+        )
+
+    def on_category_changed(self):
+        category = self.category_combo.currentData()
+        if self.task is None:
+            if category == "daily" and not self._deadline_manually_changed:
+                self.set_daily_default_deadline()
+            elif category == "short":
+                self.set_short_default_deadline()
+        self.update_ddl_rule()
+
     def update_ddl_rule(self):
         category = self.category_combo.currentData()
         is_timed = category == "timed"
@@ -281,11 +366,14 @@ class TaskDialog(QDialog):
             self.ddl_rule_label.setText("长期任务必须设置日期级 DDL")
 
         elif category == "daily":
-            # 每日任务：强制无 DDL
+            # 每日任务：默认截止到次日 03:59，配合 4:00 日界线。
             self.use_ddl_checkbox.setChecked(False)
             self.use_ddl_checkbox.setEnabled(False)
-            self.ddl_input.setEnabled(False)
-            self.ddl_rule_label.setText("每日任务固定无 DDL")
+            self.ddl_datetime_input.setVisible(True)
+            self.ddl_datetime_input.setEnabled(True)
+            if self.task is None and not self._deadline_manually_changed:
+                self.set_daily_default_deadline()
+            self.ddl_rule_label.setText("每日任务默认截止到次日 03:59")
 
         elif category == "extra":
             # 附加任务：可选 DDL
@@ -317,7 +405,7 @@ class TaskDialog(QDialog):
         # 每日任务强制关闭
         if category == "daily":
             self.use_ddl_checkbox.setChecked(False)
-            self.ddl_input.setEnabled(False)
+            self.ddl_datetime_input.setEnabled(True)
             return
 
         # 附加任务自由开关
@@ -361,7 +449,9 @@ class TaskDialog(QDialog):
         elif category == "long":
             ddl = self.ddl_input.date().toString("yyyy-MM-dd")
         elif category == "daily":
-            ddl = None
+            ddl = self.ddl_datetime_input.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+            if not ddl:
+                ddl = get_daily_default_deadline().strftime("%Y-%m-%d %H:%M:%S")
         elif category == "extra":
             if self.use_ddl_checkbox.isChecked():
                 ddl = self.ddl_input.date().toString("yyyy-MM-dd")
@@ -394,7 +484,7 @@ class TaskDialog(QDialog):
         if self.task.ddl:
             ddl_datetime = QDateTime.fromString(self.task.ddl, "yyyy-MM-dd HH:mm:ss")
             if ddl_datetime.isValid():
-                self.ddl_datetime_input.setDateTime(ddl_datetime)
+                self.set_deadline_datetime(ddl_datetime)
 
             try:
                 ddl_date = QDate.fromString(self.task.ddl[:10], "yyyy-MM-dd")
@@ -405,6 +495,8 @@ class TaskDialog(QDialog):
 
             if category == "extra":
                 self.use_ddl_checkbox.setChecked(True)
+        elif category == "daily":
+            self.set_daily_default_deadline()
 
         if self.task.scheduled_at:
             try:

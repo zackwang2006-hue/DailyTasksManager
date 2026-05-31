@@ -1,5 +1,3 @@
-from datetime import date, datetime, time
-
 from PySide6.QtWidgets import (
     QFrame,
     QVBoxLayout,
@@ -11,7 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from app.models.task import Task
 from app.ui.task_colors import get_short_task_ddl_status, get_task_card_color
-from app.utils.time_utils import format_task_time
+from app.utils.time_utils import format_task_time, get_daily_default_deadline
 
 
 class TaskCard(QFrame):
@@ -90,7 +88,7 @@ class TaskCard(QFrame):
 
     def get_ddl_text(self):
         if self.task.task_type == "daily" or self.task.category == "daily":
-            daily_due = datetime.combine(date.today(), time(23, 59))
+            daily_due = self.task.ddl or get_daily_default_deadline()
             return f"截止时间：{format_task_time(daily_due)}"
 
         if not self.task.ddl:

@@ -1,9 +1,10 @@
-from datetime import datetime, time, timedelta
+from datetime import datetime
 
 from app.database.db_manager import DBManager
 from app.models.task import Task
 from app.services.checkin_service import CheckinService
 from app.services.history_service import HistoryService
+from app.utils.time_utils import get_business_date, get_daily_default_deadline
 
 
 class TaskService:
@@ -30,6 +31,8 @@ class TaskService:
         else:
             task_type = "daily" if category == "daily" else "normal"
             scheduled_at = None
+            if task_type == "daily" and not ddl:
+                ddl = get_daily_default_deadline().strftime("%Y-%m-%d %H:%M:%S")
 
         sql = """
         INSERT INTO tasks (
@@ -118,7 +121,8 @@ class TaskService:
         if task is None or task.is_completed:
             return
 
-        completed_at = datetime.now().isoformat(timespec="seconds")
+        completed_time = datetime.now()
+        completed_at = completed_time.isoformat(timespec="seconds")
 
         sql = """
         UPDATE tasks
@@ -133,9 +137,7 @@ class TaskService:
         self.history_service.add_task_log(task)
 
         if task.task_type == "daily" or task.category == "daily":
-            checkin_date = self.get_daily_cycle_date(
-                datetime.fromisoformat(completed_at)
-            ).isoformat()
+            checkin_date = get_business_date(completed_time).isoformat()
             self.checkin_service.add_daily_checkin(
                 task.task_id,
                 checkin_date,
@@ -158,7 +160,7 @@ class TaskService:
 
     def refresh_daily_tasks(self, now=None):
         now = now or datetime.now()
-        cycle_date = self.get_daily_cycle_date(now).isoformat()
+        cycle_date = get_business_date(now).isoformat()
 
         sql = """
         UPDATE tasks
@@ -179,11 +181,7 @@ class TaskService:
         self.db.execute(sql, (cycle_date,))
 
     def get_daily_cycle_date(self, value):
-        current_day = value.date()
-        if value.time() < time(4, 0):
-            return current_day - timedelta(days=1)
-
-        return current_day
+        return get_business_date(value)
 
     def delete_task(self, task_id):
         task = self.get_task_by_id(task_id)
@@ -240,6 +238,8 @@ class TaskService:
         else:
             task_type = "daily" if category == "daily" else "normal"
             scheduled_at = None
+            if task_type == "daily" and not ddl:
+                ddl = get_daily_default_deadline().strftime("%Y-%m-%d %H:%M:%S")
 
         sql = """
         UPDATE tasks

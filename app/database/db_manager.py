@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS task_logs (
     ddl TEXT,
     scheduled_at TEXT,
     completed_at TEXT NOT NULL,
+    record_date TEXT,
     created_at TEXT
 );
 """
@@ -64,6 +65,7 @@ class DBManager:
             cursor.execute(CREATE_TASK_LOGS_TABLE_SQL)
             cursor.execute(CREATE_DAILY_CHECKINS_TABLE_SQL)
             self.migrate_tasks_table(cursor)
+            self.migrate_task_logs_table(cursor)
             conn.commit()
 
     def migrate_tasks_table(self, cursor):
@@ -93,6 +95,13 @@ class DBManager:
               AND (task_type IS NULL OR task_type = 'normal')
             """
         )
+
+    def migrate_task_logs_table(self, cursor):
+        cursor.execute("PRAGMA table_info(task_logs)")
+        columns = {row["name"] for row in cursor.fetchall()}
+
+        if "record_date" not in columns:
+            cursor.execute("ALTER TABLE task_logs ADD COLUMN record_date TEXT")
 
     def execute(self, sql, params=None):
         if params is None:

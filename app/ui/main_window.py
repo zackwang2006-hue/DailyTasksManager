@@ -3,6 +3,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -28,6 +29,10 @@ from app.utils.startup_manager import (
     request_elevated_startup_change,
     wait_for_startup_state,
 )
+
+CLOSE_BEHAVIOR_ASK = "ask"
+CLOSE_BEHAVIOR_TRAY = "tray"
+CLOSE_BEHAVIOR_EXIT = "exit"
 
 
 class MainWindow(QMainWindow):
@@ -100,8 +105,120 @@ class MainWindow(QMainWindow):
         row_layout.addWidget(self.startup_checkbox)
 
         layout.addWidget(startup_row)
+
+        close_row = QFrame(page)
+        close_row.setObjectName("SettingsRow")
+        close_layout = QHBoxLayout(close_row)
+        close_layout.setContentsMargins(16, 14, 16, 14)
+        close_layout.setSpacing(12)
+
+        close_text_layout = QVBoxLayout()
+        close_text_layout.setContentsMargins(0, 0, 0, 0)
+        close_text_layout.setSpacing(4)
+
+        close_title_label = QLabel("关闭主界面时")
+        close_title_label.setObjectName("SettingsTitle")
+        close_description_label = QLabel("控制点击主窗口关闭按钮后的程序行为")
+        close_description_label.setObjectName("SettingsDescription")
+        close_description_label.setWordWrap(True)
+
+        close_text_layout.addWidget(close_title_label)
+        close_text_layout.addWidget(close_description_label)
+
+        self.close_behavior_combo = QComboBox()
+        self.close_behavior_combo.setObjectName("CloseBehaviorComboBox")
+        self.close_behavior_combo.setMinimumHeight(34)
+        self.close_behavior_combo.setMinimumWidth(230)
+        self.close_behavior_combo.addItem("每次询问 / 遗忘之前的选择", CLOSE_BEHAVIOR_ASK)
+        self.close_behavior_combo.addItem("最小化到系统托盘", CLOSE_BEHAVIOR_TRAY)
+        self.close_behavior_combo.addItem("彻底退出程序", CLOSE_BEHAVIOR_EXIT)
+        saved_behavior = self.get_close_behavior()
+        saved_index = self.close_behavior_combo.findData(saved_behavior)
+        self.close_behavior_combo.setCurrentIndex(max(0, saved_index))
+        self.close_behavior_combo.currentIndexChanged.connect(self.on_close_behavior_changed)
+        self.close_behavior_combo.setStyleSheet("""
+            QComboBox#CloseBehaviorComboBox {
+                min-height: 34px;
+                padding: 4px 34px 4px 12px;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                background-color: #ffffff;
+                color: #222222;
+                font-size: 14px;
+            }
+
+            QComboBox#CloseBehaviorComboBox:hover {
+                border-color: #93c5fd;
+            }
+
+            QComboBox#CloseBehaviorComboBox::drop-down {
+                width: 28px;
+                border: none;
+                background-color: transparent;
+            }
+
+            QComboBox#CloseBehaviorComboBox QAbstractItemView {
+                background-color: #ffffff;
+                color: #222222;
+                border: 1px solid #cbd5e1;
+                selection-background-color: #dbeafe;
+                selection-color: #111827;
+                outline: 0;
+            }
+
+            QComboBox#CloseBehaviorComboBox QAbstractItemView::item {
+                min-height: 30px;
+                padding: 6px 10px;
+                background-color: #ffffff;
+                color: #222222;
+            }
+
+            QComboBox#CloseBehaviorComboBox QAbstractItemView::item:hover,
+            QComboBox#CloseBehaviorComboBox QAbstractItemView::item:selected {
+                background-color: #dbeafe;
+                color: #111827;
+            }
+        """)
+        self.close_behavior_combo.view().setStyleSheet("""
+            QAbstractItemView {
+                background-color: #ffffff;
+                color: #222222;
+                border: 1px solid #cbd5e1;
+                selection-background-color: #dbeafe;
+                selection-color: #111827;
+                outline: 0;
+            }
+
+            QAbstractItemView::item {
+                min-height: 30px;
+                padding: 6px 10px;
+                background-color: #ffffff;
+                color: #222222;
+            }
+
+            QAbstractItemView::item:hover,
+            QAbstractItemView::item:selected {
+                background-color: #dbeafe;
+                color: #111827;
+            }
+        """)
+
+        close_layout.addLayout(close_text_layout, 1)
+        close_layout.addWidget(self.close_behavior_combo)
+
+        layout.addWidget(close_row)
         layout.addStretch()
         return page
+
+    def get_close_behavior(self):
+        behavior = self.settings.value("close_behavior", CLOSE_BEHAVIOR_ASK)
+        if behavior in {CLOSE_BEHAVIOR_TRAY, CLOSE_BEHAVIOR_EXIT}:
+            return behavior
+        return CLOSE_BEHAVIOR_ASK
+
+    def on_close_behavior_changed(self):
+        behavior = self.close_behavior_combo.currentData()
+        self.settings.setValue("close_behavior", behavior or CLOSE_BEHAVIOR_ASK)
 
     def on_tab_changed(self, index):
         if self.tab_widget.widget(index) == self.settings_page:
@@ -190,7 +307,9 @@ class MainWindow(QMainWindow):
         self.floating_window = FloatingTaskWindow()
         self.floating_window.data_changed.connect(self.refresh_all)
         self.floating_window.show_main_requested.connect(self.show_main_window)
-        self.floating_window.new_task_requested.connect(self.open_new_task)
+        self.floating_window.new_task_requested.connect(
+            lambda: self.open_add_task_dialog(parent=self.floating_window, show_main_window=False)
+        )
         self.floating_window.show_window()
 
     def init_tray(self):
@@ -211,9 +330,13 @@ class MainWindow(QMainWindow):
         else:
             self.floating_window.show_window()
 
+    def open_add_task_dialog(self, parent=None, show_main_window=True):
+        if show_main_window:
+            self.show_main_window()
+        self.task_page.open_add_task_dialog(parent=parent)
+
     def open_new_task(self):
-        self.show_main_window()
-        self.task_page.open_add_task_dialog()
+        self.open_add_task_dialog(show_main_window=True)
 
     def exit_application(self):
         self.force_exit = True
@@ -229,12 +352,12 @@ class MainWindow(QMainWindow):
             event.accept()
             return
 
-        behavior = self.settings.value("close_behavior", "")
-        if behavior == "tray":
+        behavior = self.get_close_behavior()
+        if behavior == CLOSE_BEHAVIOR_TRAY:
             self.hide()
             event.ignore()
             return
-        if behavior == "exit":
+        if behavior == CLOSE_BEHAVIOR_EXIT:
             self.exit_application()
             event.accept()
             return
@@ -242,24 +365,80 @@ class MainWindow(QMainWindow):
         message_box = QMessageBox(self)
         message_box.setWindowTitle("关闭主窗口")
         message_box.setText("关闭主窗口时，你希望执行什么操作？")
-        tray_button = message_box.addButton("最小化到系统托盘", QMessageBox.AcceptRole)
-        exit_button = message_box.addButton("完全退出程序", QMessageBox.DestructiveRole)
-        message_box.addButton(QMessageBox.Cancel)
+        tray_button = message_box.addButton("最小化到托盘", QMessageBox.AcceptRole)
+        exit_button = message_box.addButton("完全退出", QMessageBox.DestructiveRole)
+        cancel_button = message_box.addButton("取消", QMessageBox.RejectRole)
+        tray_button.setObjectName("TrayCloseButton")
+        exit_button.setObjectName("ExitCloseButton")
+        cancel_button.setObjectName("CancelCloseButton")
         remember_checkbox = QCheckBox("记住我的选择")
         message_box.setCheckBox(remember_checkbox)
+        message_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #ffffff;
+                color: #222222;
+            }
+
+            QMessageBox QLabel,
+            QMessageBox QCheckBox {
+                background-color: transparent;
+                color: #222222;
+                font-size: 14px;
+            }
+
+            QMessageBox QPushButton {
+                min-height: 32px;
+                padding: 6px 14px;
+                border-radius: 6px;
+                border: 1px solid #cbd5e1;
+                background-color: #f8fafc;
+                color: #222222;
+                font-weight: bold;
+            }
+
+            QMessageBox QPushButton:hover {
+                background-color: #eef2f7;
+            }
+
+            QMessageBox QPushButton#TrayCloseButton {
+                border-color: #1d4ed8;
+                background-color: #2d8cff;
+                color: #ffffff;
+            }
+
+            QMessageBox QPushButton#TrayCloseButton:hover {
+                background-color: #1f6fd1;
+            }
+
+            QMessageBox QPushButton#ExitCloseButton {
+                border-color: #fecaca;
+                background-color: #fff1f2;
+                color: #991b1b;
+            }
+
+            QMessageBox QPushButton#ExitCloseButton:hover {
+                background-color: #ffe4e6;
+            }
+        """)
         message_box.exec()
 
         clicked_button = message_box.clickedButton()
         if clicked_button == tray_button:
             if remember_checkbox.isChecked():
-                self.settings.setValue("close_behavior", "tray")
+                self.settings.setValue("close_behavior", CLOSE_BEHAVIOR_TRAY)
+                self.close_behavior_combo.setCurrentIndex(
+                    self.close_behavior_combo.findData(CLOSE_BEHAVIOR_TRAY)
+                )
             self.hide()
             event.ignore()
             return
 
         if clicked_button == exit_button:
             if remember_checkbox.isChecked():
-                self.settings.setValue("close_behavior", "exit")
+                self.settings.setValue("close_behavior", CLOSE_BEHAVIOR_EXIT)
+                self.close_behavior_combo.setCurrentIndex(
+                    self.close_behavior_combo.findData(CLOSE_BEHAVIOR_EXIT)
+                )
             self.exit_application()
             event.accept()
             return

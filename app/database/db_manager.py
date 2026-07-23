@@ -76,7 +76,8 @@ class DBManager:
         return conn
 
     def init_db(self):
-        with self.get_connection() as conn:
+        conn = self.get_connection()
+        try:
             cursor = conn.cursor()
             cursor.execute(CREATE_TASKS_TABLE_SQL)
             cursor.execute(CREATE_TASK_LOGS_TABLE_SQL)
@@ -85,6 +86,8 @@ class DBManager:
             self.migrate_tasks_table(cursor)
             self.migrate_task_logs_table(cursor)
             conn.commit()
+        finally:
+            conn.close()
 
     def migrate_tasks_table(self, cursor):
         cursor.execute("PRAGMA table_info(tasks)")
@@ -168,7 +171,8 @@ class DBManager:
 
     def migration_exists_in_database(self, migration_name):
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            conn = sqlite3.connect(self.db_path)
+            try:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -185,6 +189,8 @@ class DBManager:
                     (migration_name,),
                 )
                 return cursor.fetchone() is not None
+            finally:
+                conn.close()
         except sqlite3.DatabaseError:
             return False
 
@@ -208,28 +214,37 @@ class DBManager:
         if params is None:
             params = ()
 
-        with self.get_connection() as conn:
+        conn = self.get_connection()
+        try:
             cursor = conn.cursor()
             cursor.execute(sql, params)
             conn.commit()
             return cursor.lastrowid
+        finally:
+            conn.close()
 
     def fetch_all(self, sql, params=None):
         if params is None:
             params = ()
 
-        with self.get_connection() as conn:
+        conn = self.get_connection()
+        try:
             cursor = conn.cursor()
             cursor.execute(sql, params)
             rows = cursor.fetchall()
             return rows
+        finally:
+            conn.close()
 
     def fetch_one(self, sql, params=None):
         if params is None:
             params = ()
 
-        with self.get_connection() as conn:
+        conn = self.get_connection()
+        try:
             cursor = conn.cursor()
             cursor.execute(sql, params)
             row = cursor.fetchone()
             return row
+        finally:
+            conn.close()

@@ -461,6 +461,8 @@ class TaskPage(QWidget):
         message_box = QMessageBox(self)
         message_box.setWindowTitle("确认删除")
         message_box.setText("确定要删除这个任务吗？")
+        if task is not None and task.plan_level and self.task_service.has_active_daily_tasks_for_parent(task_id):
+            message_box.setText("该计划下存在每日任务，删除计划后关联每日任务将停止并归档。")
         message_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         message_box.button(QMessageBox.Yes).setText("确定")
         message_box.button(QMessageBox.No).setText("取消")

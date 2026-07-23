@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from app.services.checkin_service import CheckinService
 from app.services.task_service import TaskService
-from app.ui.task_dialog import TaskDialog
+from app.ui.daily_task_dialog import DailyTaskDialog
 
 
 class CheckinPage(QWidget):
@@ -41,16 +41,23 @@ class CheckinPage(QWidget):
         main_layout = QVBoxLayout(self)
 
         title_label = QLabel("打卡记录")
+        title_label.setText("每日任务")
         title_label.setObjectName("TitleLabel")
+
+        add_task_button = QPushButton("+ 新增每日任务")
+        add_task_button.setObjectName("PrimaryButton")
+        add_task_button.clicked.connect(self.open_add_task_dialog)
+
+        title_layout = QHBoxLayout()
+        title_layout.addWidget(title_label)
+        title_layout.addStretch()
+        title_layout.addWidget(add_task_button)
 
         content_layout = QHBoxLayout()
 
         self.task_list_frame = QFrame()
         self.task_list_frame.setObjectName("PanelFrame")
         task_list_layout = QVBoxLayout(self.task_list_frame)
-
-        task_list_title = QLabel("每日任务")
-        task_list_title.setObjectName("PanelTitle")
 
         self.task_scroll_area = QScrollArea()
         self.task_scroll_area.setWidgetResizable(True)
@@ -61,7 +68,6 @@ class CheckinPage(QWidget):
         self.task_layout.setAlignment(Qt.AlignTop)
         self.task_scroll_area.setWidget(self.task_container)
 
-        task_list_layout.addWidget(task_list_title)
         task_list_layout.addWidget(self.task_scroll_area)
 
         self.calendar_frame = QFrame()
@@ -90,7 +96,7 @@ class CheckinPage(QWidget):
         content_layout.addWidget(self.task_list_frame)
         content_layout.addWidget(self.calendar_frame, 1)
 
-        main_layout.addWidget(title_label)
+        main_layout.addLayout(title_layout)
         main_layout.addLayout(content_layout)
 
         self.setStyleSheet("""
@@ -141,6 +147,19 @@ class CheckinPage(QWidget):
                 background-color: transparent;
             }
 
+            QPushButton#PrimaryButton {
+                padding: 8px 14px;
+                border-radius: 8px;
+                background-color: #2d8cff;
+                color: white;
+                border: 1px solid #2d8cff;
+                font-weight: bold;
+            }
+
+            QPushButton#PrimaryButton:hover {
+                background-color: #1f6fd1;
+            }
+
             QLabel#DayCell {
                 min-height: 52px;
                 border-radius: 8px;
@@ -184,6 +203,7 @@ class CheckinPage(QWidget):
 
     def refresh_tasks(self):
         self.clear_layout(self.task_layout)
+        self.task_service.ensure_daily_plan_tasks_for_date(date.today())
         self.daily_tasks = self.task_service.get_daily_tasks()
         self.task_buttons = {}
 
@@ -208,7 +228,10 @@ class CheckinPage(QWidget):
             )
 
         for task in self.daily_tasks:
-            button = QPushButton(task.title)
+            button_text = task.title
+            if task.parent_plan_task_id is None:
+                button_text = f"{task.title}\n未绑定旧每日任务"
+            button = QPushButton(button_text)
             button.setObjectName("TaskButton")
             button.setProperty("selected", task.task_id == self.selected_task.task_id)
             button.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -248,23 +271,33 @@ class CheckinPage(QWidget):
         elif selected_action == delete_action:
             self.delete_daily_task(task.task_id)
 
+    def open_add_task_dialog(self):
+        dialog = DailyTaskDialog(parent=self, task_service=self.task_service)
+
+        if dialog.exec():
+            data = dialog.get_task_data()
+            self.task_service.add_daily_task_rule(
+                title=data["title"],
+                description=data["description"],
+                parent_plan_task_id=data["parent_plan_task_id"],
+            )
+            self.refresh_tasks()
+            self.data_changed.emit()
+
     def open_edit_task_dialog(self, task_id):
         task = self.task_service.get_task_by_id(task_id)
         if task is None:
             return
 
-        dialog = TaskDialog(task, self)
+        dialog = DailyTaskDialog(task, self, task_service=self.task_service)
 
         if dialog.exec():
             data = dialog.get_task_data()
-            self.task_service.update_task(
-                task_id=task_id,
+            self.task_service.archive_daily_task(task_id)
+            self.task_service.add_daily_task_rule(
                 title=data["title"],
                 description=data["description"],
-                category=data["category"],
-                ddl=data["ddl"],
-                task_type=data["task_type"],
-                scheduled_at=data["scheduled_at"],
+                parent_plan_task_id=data["parent_plan_task_id"],
             )
             self.refresh_tasks()
             self.data_changed.emit()
@@ -273,7 +306,7 @@ class CheckinPage(QWidget):
         result = QMessageBox.question(
             self,
             "确认删除",
-            "确定要删除这个每日任务吗？历史打卡记录会保留。",
+            "删除后将停止生成新的日计划任务，已有打卡记录不会删除。",
             QMessageBox.Yes | QMessageBox.No,
         )
 
@@ -283,7 +316,7 @@ class CheckinPage(QWidget):
         if self.selected_task is not None and self.selected_task.task_id == task_id:
             self.selected_task = None
 
-        self.task_service.soft_delete_task(task_id)
+        self.task_service.archive_daily_task(task_id)
         self.refresh_tasks()
         self.data_changed.emit()
 
@@ -343,6 +376,10 @@ class CheckinPage(QWidget):
         return date.today()
 
     def get_task_available_date(self, task, created_date):
+        period_start = self.get_date_part(task.period_start)
+        if period_start:
+            return period_start
+
         scheduled_date = self.get_date_part(task.scheduled_at)
         if created_date and scheduled_date:
             return max(created_date, scheduled_date)

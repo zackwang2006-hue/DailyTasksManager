@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
 
         self.tab_widget.addTab(self.task_page, "五年计划")
         self.tab_widget.addTab(self.history_page, "历史完成")
-        self.tab_widget.addTab(self.checkin_page, "打卡记录")
+        self.tab_widget.addTab(self.checkin_page, "每日任务")
         self.tab_widget.addTab(self.settings_page, "设置")
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
 

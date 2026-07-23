@@ -6,7 +6,7 @@ from app.models.task import Task
 from app.services.checkin_service import CheckinService
 from app.services.history_service import HistoryService
 from app.services.period_service import period_service
-from app.utils.time_utils import get_business_date, get_daily_default_deadline
+from app.utils.time_utils import get_daily_default_deadline
 
 
 DAILY_TASK_PARENT_LEVELS = (
@@ -62,7 +62,7 @@ class TaskService:
             task_type = "daily" if category == "daily" else "normal"
             scheduled_at = None
             if task_type == "daily" and not ddl:
-                ddl = get_daily_default_deadline().strftime("%Y-%m-%d %H:%M:%S")
+                ddl = get_daily_default_deadline(now_value).strftime("%Y-%m-%d %H:%M:%S")
 
         sql = """
         INSERT INTO tasks (
@@ -399,39 +399,114 @@ class TaskService:
         return [Task.from_row(row) for row in rows]
 
     def complete_task(self, task_id):
+        return self.complete_task_with_daily_sync(task_id)
+
+    def complete_task_with_daily_sync(self, task_id):
         task = self.get_task_by_id(task_id)
 
         if task is None or task.is_completed:
-            return
+            return False
 
         completed_time = datetime.now()
         completed_at = completed_time.isoformat(timespec="seconds")
 
-        sql = """
-        UPDATE tasks
-        SET is_completed = 1,
-            completed_at = ?
-        WHERE id = ?
-        """
+        with self.db.transaction() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET is_completed = 1,
+                    completed_at = ?
+                WHERE id = ?
+                """,
+                (completed_at, task_id),
+            )
 
-        self.db.execute(sql, (completed_at, task_id))
+            if task.task_type == "daily" or task.category == "daily":
+                checkin_date = period_service.get_local_today().isoformat()
+                self.upsert_daily_checkin(
+                    cursor,
+                    task.task_id,
+                    checkin_date,
+                    True,
+                    completed_at,
+                )
+            elif task.source_daily_task_id and task.generated_date:
+                self.upsert_daily_checkin(
+                    cursor,
+                    task.source_daily_task_id,
+                    task.generated_date,
+                    True,
+                    completed_at,
+                )
 
         task.completed_at = completed_at
         self.history_service.add_task_log(task)
+        return True
 
-        if task.task_type == "daily" or task.category == "daily":
-            checkin_date = get_business_date(completed_time).isoformat()
-            self.checkin_service.add_daily_checkin(
-                task.task_id,
-                checkin_date,
-                completed_at,
+    def set_daily_checkin_with_plan_sync(self, daily_task_id, target_date=None, completed=True):
+        target_date = period_service.normalize_date(target_date)
+        completed = bool(completed)
+        timestamp = datetime.now().isoformat(timespec="seconds")
+
+        if completed:
+            self.ensure_daily_plan_tasks_for_date(target_date)
+
+        generated_task = self.get_generated_daily_plan_task(daily_task_id, target_date)
+        should_log_generated_task = (
+            completed
+            and generated_task is not None
+            and not generated_task.is_completed
+        )
+
+        with self.db.transaction() as conn:
+            cursor = conn.cursor()
+            self.upsert_daily_checkin(
+                cursor,
+                daily_task_id,
+                target_date.isoformat(),
+                completed,
+                timestamp,
             )
-        elif task.source_daily_task_id and task.generated_date:
-            self.checkin_service.add_daily_checkin(
-                task.source_daily_task_id,
-                task.generated_date,
-                completed_at,
-            )
+
+            if generated_task is not None:
+                if completed:
+                    cursor.execute(
+                        """
+                        UPDATE tasks
+                        SET is_completed = 1,
+                            completed_at = COALESCE(completed_at, ?)
+                        WHERE id = ?
+                        """,
+                        (timestamp, generated_task.task_id),
+                    )
+                    generated_task.completed_at = generated_task.completed_at or timestamp
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE tasks
+                        SET is_completed = 0,
+                            completed_at = NULL
+                        WHERE id = ?
+                        """,
+                        (generated_task.task_id,),
+                    )
+
+        if should_log_generated_task:
+            self.history_service.add_task_log(generated_task)
+        return True
+
+    def upsert_daily_checkin(self, cursor, task_id, checkin_date, completed, completed_at):
+        cursor.execute(
+            """
+            INSERT INTO daily_checkins (task_id, checkin_date, is_completed, completed_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(task_id, checkin_date) DO UPDATE SET
+                is_completed = excluded.is_completed,
+                completed_at = excluded.completed_at
+            """,
+            (task_id, checkin_date, 1 if completed else 0, completed_at),
+        )
 
     def get_daily_tasks(self):
         self.refresh_daily_tasks()
@@ -452,8 +527,11 @@ class TaskService:
         return [Task.from_row(row) for row in rows]
 
     def refresh_daily_tasks(self, now=None):
-        now = now or datetime.now()
-        today = get_business_date(now)
+        today = (
+            period_service.normalize_date(now)
+            if now is not None
+            else period_service.get_local_today()
+        )
         self.settle_daily_checkins(today)
 
         sql = """
@@ -475,7 +553,7 @@ class TaskService:
         self.db.execute(sql, (today.isoformat(),))
 
     def get_daily_cycle_date(self, value):
-        return get_business_date(value)
+        return period_service.normalize_date(value)
 
     def settle_daily_checkins(self, today):
         sql = """
@@ -495,7 +573,7 @@ class TaskService:
             if task.is_completed and task.completed_at:
                 completed_time = self.parse_datetime(task.completed_at)
                 if completed_time is not None:
-                    completed_date = get_business_date(completed_time)
+                    completed_date = period_service.normalize_date(completed_time)
                     if start_date <= completed_date < today:
                         self.checkin_service.add_daily_checkin(
                             task.task_id,

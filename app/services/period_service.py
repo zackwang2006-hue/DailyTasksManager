@@ -9,6 +9,17 @@ FIVE_YEAR_SPAN = 5
 
 
 class PeriodService:
+    def __init__(self, date_provider=None):
+        self._date_provider = date_provider
+
+    def set_date_provider(self, date_provider):
+        self._date_provider = date_provider
+
+    def get_local_today(self):
+        if self._date_provider is None:
+            return date.today()
+        return self.normalize_date(self._date_provider())
+
     def current_period(self, level, today=None):
         target_date = self.normalize_date(today)
         return self.period_for_date(level, target_date)
@@ -83,7 +94,7 @@ class PeriodService:
 
     def normalize_date(self, value=None):
         if value is None:
-            return date.today()
+            return self.get_local_today()
         if isinstance(value, datetime):
             return value.date()
         if isinstance(value, date):
@@ -98,4 +109,3 @@ class PeriodService:
 
 
 period_service = PeriodService()
-

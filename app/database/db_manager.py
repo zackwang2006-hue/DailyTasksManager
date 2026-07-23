@@ -1,5 +1,6 @@
 import shutil
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 
 from app.config import DB_PATH, DATA_DIR
@@ -74,6 +75,18 @@ class DBManager:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @contextmanager
+    def transaction(self):
+        conn = self.get_connection()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def init_db(self):
         conn = self.get_connection()

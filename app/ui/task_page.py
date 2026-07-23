@@ -190,7 +190,6 @@ class TaskPage(QWidget):
         self.sections = {}
         self.init_ui()
         self.refresh_tasks()
-        self.init_refresh_timer()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -344,11 +343,6 @@ class TaskPage(QWidget):
                 background: transparent;
             }
         """)
-
-    def init_refresh_timer(self):
-        self.refresh_timer = QTimer(self)
-        self.refresh_timer.timeout.connect(self.refresh_tasks)
-        self.refresh_timer.start(60000)
 
     def refresh_tasks(self):
         self.expanded_task_card = None

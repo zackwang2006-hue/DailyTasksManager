@@ -1,4 +1,4 @@
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QEvent, QSettings
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -15,6 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import APP_ICON_PATH, APP_NAME, WINDOW_HEIGHT, WINDOW_WIDTH
+from app.services.date_refresh_coordinator import DateRefreshCoordinator
+from app.services.period_service import period_service
+from app.services.task_service import TaskService
 from app.ui.checkin_page import CheckinPage
 from app.ui.floating_task_window import FloatingTaskWindow
 from app.ui.history_page import HistoryPage
@@ -43,6 +46,8 @@ class MainWindow(QMainWindow):
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.settings = QSettings(APP_NAME, "MainWindow")
         self.force_exit = False
+        self.task_service = TaskService()
+        self._refreshing = False
 
         if APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(APP_ICON_PATH)))
@@ -51,6 +56,9 @@ class MainWindow(QMainWindow):
         self.apply_global_style()
         self.init_floating_window()
         self.init_tray()
+        self.init_date_refresh_coordinator()
+        self.run_daily_refresh_for_date(period_service.get_local_today())
+        self.refresh_all(run_daily_refresh=False)
 
     def init_ui(self):
         self.tab_widget = QTabWidget()
@@ -221,6 +229,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("close_behavior", behavior or CLOSE_BEHAVIOR_ASK)
 
     def on_tab_changed(self, index):
+        if hasattr(self, "date_refresh_coordinator"):
+            self.date_refresh_coordinator.check_date_change()
         if self.tab_widget.widget(index) == self.settings_page:
             self.refresh_startup_checkbox()
 
@@ -306,6 +316,7 @@ class MainWindow(QMainWindow):
     def init_floating_window(self):
         self.floating_window = FloatingTaskWindow()
         self.floating_window.data_changed.connect(self.refresh_all)
+        self.floating_window.date_check_requested.connect(self.check_date_change)
         self.floating_window.show_main_requested.connect(self.show_main_window)
         self.floating_window.new_task_requested.connect(
             lambda: self.open_add_task_dialog(parent=self.floating_window, show_main_window=False)
@@ -315,9 +326,43 @@ class MainWindow(QMainWindow):
     def init_tray(self):
         self.tray_manager = SystemTrayManager(self)
 
-    def refresh_all(self):
-        self.refresh_pages()
-        self.floating_window.refresh_tasks()
+    def init_date_refresh_coordinator(self):
+        self.date_refresh_coordinator = DateRefreshCoordinator(self)
+        self.date_refresh_coordinator.date_changed.connect(self.on_date_changed)
+        self.date_refresh_coordinator.start()
+
+    def check_date_change(self):
+        if hasattr(self, "date_refresh_coordinator"):
+            self.date_refresh_coordinator.check_date_change()
+
+    def run_daily_refresh_for_date(self, target_date):
+        self.task_service.expire_daily_tasks(target_date)
+        self.task_service.ensure_daily_plan_tasks_for_date(target_date)
+
+    def on_date_changed(self, old_date, new_date):
+        self.run_daily_refresh_for_date(new_date)
+        self.refresh_all(run_daily_refresh=False)
+
+    def refresh_all(self, run_daily_refresh=True):
+        if self._refreshing:
+            return
+        self._refreshing = True
+        try:
+            if run_daily_refresh:
+                self.run_daily_refresh_for_date(period_service.get_local_today())
+            self.refresh_pages()
+            self.floating_window.refresh_tasks()
+        finally:
+            self._refreshing = False
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            self.check_date_change()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.check_date_change()
 
     def show_main_window(self):
         self.show()

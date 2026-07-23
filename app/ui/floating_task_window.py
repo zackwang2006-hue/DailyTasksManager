@@ -1,5 +1,3 @@
-from datetime import date, datetime, time, timedelta
-
 from PySide6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
@@ -29,32 +27,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.config import APP_NAME, TASK_CATEGORIES
+from app.config import APP_NAME
+from app.models.plan import PlanLevel
+from app.services.period_service import period_service
 from app.services.task_service import TaskService
 from app.ui.quick_note import QuickNoteView
 from app.ui.task_colors import get_task_card_color
 from app.ui.theme import RADIUS_WINDOW, THEME, floating_window_qss
-from app.utils.time_utils import format_task_time, get_daily_default_deadline, is_task_overdue
 
-
-FILTER_ALL = "all"
-FILTER_TODAY = "today"
-FILTER_THREE_DAYS = "three_days"
-FILTER_SEVEN_DAYS = "seven_days"
 
 PAGE_TASKS = "tasks"
 PAGE_QUICK_NOTE = "quick_note"
 
-FILTER_ORDER = (FILTER_ALL, FILTER_TODAY, FILTER_THREE_DAYS, FILTER_SEVEN_DAYS)
-FILTER_LABELS = {
-    FILTER_ALL: "全部",
-    FILTER_TODAY: "今日截止",
-    FILTER_THREE_DAYS: "近三日",
-    FILTER_SEVEN_DAYS: "近七日",
-}
 PAGE_ORDER = (PAGE_TASKS, PAGE_QUICK_NOTE)
 PAGE_LABELS = {
-    PAGE_TASKS: "任务清单",
+    PAGE_TASKS: "日计划",
     PAGE_QUICK_NOTE: "随手记",
 }
 
@@ -69,15 +56,6 @@ EXPANDED_MIN_WIDTH = 320
 EXPANDED_MIN_HEIGHT = 420
 COLLAPSED_WIDTH = 320
 COLLAPSED_HEIGHT = 58
-
-SECTION_ORDER = (
-    ("short", "短期任务"),
-    ("long", "长期任务"),
-    ("daily", "每日任务"),
-    ("timed", "定时任务"),
-    ("extra", "附加任务"),
-)
-
 
 class CurrentPageStack(QStackedWidget):
     def sizeHint(self):
@@ -303,6 +281,7 @@ class FloatingTaskItem(QFrame):
 
 class FloatingTaskWindow(QWidget):
     data_changed = Signal()
+    date_check_requested = Signal()
     show_main_requested = Signal()
     new_task_requested = Signal()
 
@@ -311,7 +290,6 @@ class FloatingTaskWindow(QWidget):
         self.task_service = TaskService()
         self.settings = QSettings(APP_NAME, "FloatingWindow")
         self.current_page = PAGE_TASKS
-        self.current_filter = FILTER_ALL
         self.is_collapsed = False
         self.is_window_pinned = self.settings.value("pinned", True, type=bool)
         self.pinned_task_ids = set()
@@ -333,10 +311,10 @@ class FloatingTaskWindow(QWidget):
         self._interacting_inside = False
         self._changing_collapsed_state = False
         self.expanded_size = QSize(EXPANDED_DEFAULT_WIDTH, EXPANDED_DEFAULT_HEIGHT)
-        self.task_scroll_positions = {}
+        self.task_scroll_position = 0
         self.expanded_task_ids = set()
 
-        self.setWindowTitle("任务清单")
+        self.setWindowTitle("日计划")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, self.is_window_pinned)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -417,27 +395,6 @@ class FloatingTaskWindow(QWidget):
         title_layout.addWidget(self.pin_window_button)
         title_layout.addWidget(self.close_button)
 
-        self.filter_frame = QFrame()
-        self.filter_frame.setObjectName("FilterFrame")
-        self.filter_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        filter_layout = QHBoxLayout(self.filter_frame)
-        filter_layout.setContentsMargins(0, 0, 0, 0)
-        filter_layout.setSpacing(6)
-        self.filter_group = QButtonGroup(self)
-        self.filter_group.setExclusive(True)
-        self.filter_buttons = {}
-        for filter_key in FILTER_ORDER:
-            button = QPushButton(FILTER_LABELS[filter_key])
-            button.setObjectName("FilterButton")
-            button.setCheckable(True)
-            button.setFixedSize(68, 32)
-            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            button.clicked.connect(lambda checked=False, selected=filter_key: self.set_filter(selected))
-            self.filter_group.addButton(button)
-            self.filter_buttons[filter_key] = button
-            filter_layout.addWidget(button)
-        filter_layout.addStretch(1)
-
         self.scroll_area = QScrollArea()
         self.scroll_area.setObjectName("TaskScrollArea")
         self.scroll_area.setWidgetResizable(True)
@@ -463,8 +420,7 @@ class FloatingTaskWindow(QWidget):
         self.task_page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         task_page_layout = QVBoxLayout(self.task_page)
         task_page_layout.setContentsMargins(0, 0, 0, 0)
-        task_page_layout.setSpacing(8)
-        task_page_layout.addWidget(self.filter_frame, 0)
+        task_page_layout.setSpacing(0)
         task_page_layout.addWidget(self.scroll_area, 1)
 
         self.quick_note_page = QWidget()
@@ -852,19 +808,11 @@ class FloatingTaskWindow(QWidget):
         self.snap_edge = self.normalize_snap_edge(self.settings.value("snap_edge", self.snap_edge))
         self.snap_corner = self.normalize_snap_corner(self.settings.value("snap_corner", self.snap_corner))
         self.is_collapsed = self.settings.value("collapsed", self.is_collapsed, type=bool)
-        saved_filter = self.settings.value("filter", self.current_filter)
-        if saved_filter == PAGE_QUICK_NOTE:
-            saved_filter = FILTER_ALL
-        if saved_filter in FILTER_LABELS:
-            self.current_filter = saved_filter
 
         pos = self.settings.value("pos")
         if isinstance(pos, QPoint):
             self.move(pos)
 
-        checked_button = self.filter_buttons.get(self.current_filter)
-        if checked_button is not None:
-            checked_button.setChecked(True)
         checked_page_button = self.page_buttons.get(self.current_page)
         if checked_page_button is not None:
             checked_page_button.setChecked(True)
@@ -874,7 +822,6 @@ class FloatingTaskWindow(QWidget):
         self.settings.setValue("opacity", self.clamp_opacity(int(self.windowOpacity() * 100)))
         self.settings.setValue("collapsed", self.is_collapsed)
         self.settings.setValue("page", self.current_page)
-        self.settings.setValue("filter", self.current_filter)
         self.settings.setValue("visible", self.isVisible())
         self.settings.setValue("pinned", self.is_window_pinned)
         self.settings.setValue("auto_hide_enabled", self.auto_hide_enabled)
@@ -882,6 +829,7 @@ class FloatingTaskWindow(QWidget):
         self.settings.setValue("snap_corner", self.snap_corner or "")
 
     def show_window(self):
+        self.date_check_requested.emit()
         if self.current_page == PAGE_QUICK_NOTE:
             self.show_quick_note()
         else:
@@ -905,26 +853,11 @@ class FloatingTaskWindow(QWidget):
     def should_show_on_startup(self):
         return self.settings.value("visible", False, type=bool)
 
-    def set_filter(self, filter_key):
-        if filter_key not in FILTER_LABELS:
-            return
-        self.remember_task_page_state(self.current_filter)
-        self.current_filter = filter_key
-        self.settings.setValue("filter", filter_key)
-        button = self.filter_buttons.get(filter_key)
-        if button is not None and not button.isChecked():
-            button.setChecked(True)
-        if self.current_page != PAGE_TASKS:
-            self.set_page(PAGE_TASKS)
-            return
-        self.show_task_list()
-        self.refresh_tasks()
-
     def set_page(self, page_key):
         if page_key not in PAGE_LABELS:
             return
         if self.current_page == PAGE_TASKS:
-            self.remember_task_page_state(self.current_filter)
+            self.remember_task_page_state()
         elif self.current_page == PAGE_QUICK_NOTE and page_key != PAGE_QUICK_NOTE:
             self.quick_note_view.final_save()
 
@@ -942,12 +875,10 @@ class FloatingTaskWindow(QWidget):
 
     def show_task_list(self):
         self.content_stack.setCurrentWidget(self.task_page)
-        self.filter_frame.setVisible(not self.is_collapsed)
         self.content_stack.setVisible(not self.is_collapsed)
 
     def show_quick_note(self):
         self.content_stack.setCurrentWidget(self.quick_note_page)
-        self.filter_frame.setVisible(False)
         self.content_stack.setVisible(not self.is_collapsed)
         if not self.is_collapsed:
             self.quick_note_view.editor.setFocus()
@@ -957,46 +888,27 @@ class FloatingTaskWindow(QWidget):
     def refresh_tasks(self):
         if self.current_page != PAGE_TASKS:
             return
-        self.remember_task_page_state(self.current_filter)
+        self.remember_task_page_state()
         self.clear_task_layout()
-        tasks = self.get_filtered_tasks()
+        tasks = self.get_today_plan_tasks()
 
         if not tasks:
-            empty_label = QLabel("当前筛选下没有待办任务")
+            empty_label = QLabel("今日日计划为空")
             empty_label.setObjectName("EmptyLabel")
             empty_label.setAlignment(Qt.AlignCenter)
             empty_label.setWordWrap(True)
             self.task_layout.addWidget(empty_label)
-        elif self.current_filter == FILTER_ALL:
-            self.add_grouped_tasks(tasks)
         else:
             for task_info in tasks:
                 self.add_task_item(task_info, allow_pin=True)
 
         self.task_layout.addStretch()
         self.update_collapsed_text()
-        self.restore_task_page_state(self.current_filter)
+        self.restore_task_page_state()
         self.schedule_reposition_after_resize()
 
-    def add_grouped_tasks(self, tasks):
-        grouped = {key: [] for key, _ in SECTION_ORDER}
-        for task_info in tasks:
-            grouped.setdefault(self.get_task_section_key(task_info[0]), []).append(task_info)
-
-        for section_key, section_title in SECTION_ORDER:
-            section_tasks = grouped.get(section_key, [])
-            if not section_tasks:
-                continue
-
-            title = QLabel(section_title)
-            title.setObjectName("SectionTitle")
-            self.task_layout.addWidget(title)
-
-            for task_info in section_tasks:
-                self.add_task_item(task_info, allow_pin=False)
-
     def add_task_item(self, task_info, allow_pin):
-        task, due_value, time_text, category_text = task_info
+        task, time_text, category_text = task_info
         is_pinned = task.task_id in self.pinned_task_ids
         item = FloatingTaskItem(
             task,
@@ -1020,15 +932,12 @@ class FloatingTaskWindow(QWidget):
             self.show_from_auto_hide()
         self.schedule_reposition_after_resize()
 
-    def remember_task_page_state(self, filter_key):
-        if filter_key not in FILTER_LABELS:
-            return
-        self.task_scroll_positions[filter_key] = self.scroll_area.verticalScrollBar().value()
+    def remember_task_page_state(self):
+        self.task_scroll_position = self.scroll_area.verticalScrollBar().value()
         self.remember_expanded_task_items()
 
-    def restore_task_page_state(self, filter_key):
-        scroll_value = self.task_scroll_positions.get(filter_key, 0)
-        QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(scroll_value))
+    def restore_task_page_state(self):
+        QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(self.task_scroll_position))
 
     def remember_expanded_task_items(self):
         expanded_ids = set()
@@ -1045,117 +954,26 @@ class FloatingTaskWindow(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
-    def get_filtered_tasks(self):
-        today = date.today()
-        tasks = []
-        for task in self.task_service.get_uncompleted_tasks():
-            due_value = self.get_task_due_datetime(task)
-            due_date = due_value.date() if due_value else None
-            if not self.task_matches_filter(task, due_value, due_date, today):
-                continue
-
-            tasks.append((
-                task,
-                due_value,
-                self.format_time_text(task, due_value),
-                self.get_category_text(task),
-            ))
-
+    def get_today_plan_tasks(self):
+        today = period_service.get_local_today()
+        self.task_service.ensure_daily_plan_tasks_for_date(today)
+        tasks = self.task_service.get_current_plan_tasks(PlanLevel.DAY, today)
         tasks = sorted(
             tasks,
-            key=lambda item: (
-                item[1] is None,
-                item[1] or datetime.max,
-                item[0].created_at or "",
+            key=lambda task: (
+                task.task_id not in self.pinned_task_ids,
+                task.created_at or "",
+                task.task_id or 0,
             ),
         )
-
-        if self.current_filter != FILTER_ALL:
-            tasks = sorted(
-                tasks,
-                key=lambda item: (
-                    item[0].task_id not in self.pinned_task_ids,
-                    item[1] is None,
-                    item[1] or datetime.max,
-                    item[0].created_at or "",
-                ),
+        return [
+            (
+                task,
+                f"日期：{today.isoformat()}",
+                "日计划",
             )
-
-        return tasks
-
-    def task_matches_filter(self, task, due_value, due_date, today):
-        if self.current_filter == FILTER_ALL:
-            return True
-
-        if due_value is None:
-            return False
-
-        now = datetime.now()
-        if due_value <= now:
-            return False
-
-        if self.current_filter == FILTER_TODAY:
-            return due_date == today
-        if self.current_filter == FILTER_THREE_DAYS:
-            return now <= due_value <= now + timedelta(days=3)
-        if self.current_filter == FILTER_SEVEN_DAYS:
-            return now <= due_value <= now + timedelta(days=7)
-
-        return True
-
-    def get_task_due_datetime(self, task):
-        if task.task_type == "daily" or task.category == "daily":
-            if task.ddl:
-                try:
-                    return datetime.fromisoformat(str(task.ddl))
-                except ValueError:
-                    return get_daily_default_deadline()
-            return get_daily_default_deadline()
-
-        value = task.scheduled_at if task.task_type == "timed" or task.category == "timed" else task.ddl
-        if not value:
-            return None
-
-        try:
-            parsed = datetime.fromisoformat(str(value))
-            if len(str(value)) <= 10:
-                return datetime.combine(parsed.date(), time(23, 59))
-            return parsed
-        except ValueError:
-            try:
-                return datetime.combine(
-                    datetime.fromisoformat(str(value)[:10]).date(),
-                    time(23, 59),
-                )
-            except ValueError:
-                return None
-
-    def format_time_text(self, task, due_value):
-        if is_task_overdue(task):
-            return "已过期"
-
-        if task.task_type == "timed" or task.category == "timed":
-            if due_value is None:
-                return "时间：未设置"
-            return f"时间：{format_task_time(due_value)}"
-
-        if due_value is None:
-            return "截止时间：未设置"
-        return f"截止时间：{format_task_time(due_value)}"
-
-    def get_category_text(self, task):
-        if task.task_type == "timed" or task.category == "timed":
-            return "定时任务"
-        return TASK_CATEGORIES.get(task.category, "普通任务")
-
-    def get_task_section_key(self, task):
-        if task.task_type == "timed" or task.category == "timed":
-            return "timed"
-        if task.task_type == "daily" or task.category == "daily":
-            return "daily"
-        if task.category in {"short", "long", "extra"}:
-            return task.category
-        return "extra"
+            for task in tasks
+        ]
 
     def toggle_task_pinned(self, task_id):
         if task_id in self.pinned_task_ids:
@@ -1171,15 +989,8 @@ class FloatingTaskWindow(QWidget):
         self.data_changed.emit()
 
     def update_collapsed_text(self):
-        today = date.today()
-        today_count = 0
-
-        for task in self.task_service.get_uncompleted_tasks():
-            due_value = self.get_task_due_datetime(task)
-            if due_value and due_value > datetime.now() and due_value.date() == today:
-                today_count += 1
-
-        text = f"今日 {today_count} 项待办" if today_count else "任务清单"
+        today_count = len(self.task_service.get_current_plan_tasks(PlanLevel.DAY, period_service.get_local_today()))
+        text = f"今日 {today_count} 项日计划" if today_count else "日计划"
         if self.is_collapsed:
             self.title_label.setText(text)
 
@@ -1216,7 +1027,6 @@ class FloatingTaskWindow(QWidget):
         self.save_settings()
 
     def apply_collapsed_state(self):
-        self.filter_frame.setVisible(not self.is_collapsed and self.current_page == PAGE_TASKS)
         self.content_stack.setVisible(not self.is_collapsed)
         if self.current_page == PAGE_QUICK_NOTE:
             self.content_stack.setCurrentWidget(self.quick_note_page)
@@ -1224,7 +1034,7 @@ class FloatingTaskWindow(QWidget):
             self.content_stack.setCurrentWidget(self.task_page)
         self.close_button.setVisible(not self.is_collapsed)
         self.collapse_button.set_icon_name("expand" if self.is_collapsed else "collapse")
-        self.title_label.setText("任务清单")
+        self.title_label.setText("日计划")
         if self.is_collapsed:
             self.update_collapsed_text()
             self.root_content_layout.setContentsMargins(14, 6, 14, 6)
@@ -1253,6 +1063,18 @@ class FloatingTaskWindow(QWidget):
                 max(self.height(), EXPANDED_MIN_HEIGHT),
             )
             self.schedule_reposition_after_resize()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.date_check_requested.emit()
+        if self.current_page == PAGE_TASKS:
+            self.refresh_tasks()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow() and self.current_page == PAGE_TASKS:
+            self.date_check_requested.emit()
+            self.refresh_tasks()
 
     def toggle_window_pinned(self):
         self.is_window_pinned = not self.is_window_pinned

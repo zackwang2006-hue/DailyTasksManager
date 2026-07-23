@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.services.checkin_service import CheckinService
+from app.services.period_service import period_service
 from app.services.task_service import TaskService
 from app.ui.daily_task_dialog import DailyTaskDialog
 from app.ui.theme import apply_dark_context_menu_style
@@ -204,7 +205,7 @@ class CheckinPage(QWidget):
 
     def refresh_tasks(self):
         self.clear_layout(self.task_layout)
-        self.task_service.ensure_daily_plan_tasks_for_date(date.today())
+        self.task_service.ensure_daily_plan_tasks_for_date(period_service.get_local_today())
         self.daily_tasks = self.task_service.get_daily_tasks()
         self.task_buttons = {}
 
@@ -263,6 +264,10 @@ class CheckinPage(QWidget):
     def open_task_menu(self, task, source, position):
         menu = QMenu(self)
         apply_dark_context_menu_style(menu)
+        checkin_action = menu.addAction("完成今日打卡")
+        if task.parent_plan_task_id is None:
+            checkin_action.setEnabled(False)
+        menu.addSeparator()
         edit_action = menu.addAction("编辑每日任务")
         delete_action = menu.addAction("删除每日任务")
 
@@ -270,10 +275,21 @@ class CheckinPage(QWidget):
             return
         selected_action = menu.exec(source.mapToGlobal(position))
 
-        if selected_action == edit_action:
+        if selected_action == checkin_action:
+            self.complete_today_checkin(task.task_id)
+        elif selected_action == edit_action:
             self.open_edit_task_dialog(task.task_id)
         elif selected_action == delete_action:
             self.delete_daily_task(task.task_id)
+
+    def complete_today_checkin(self, task_id):
+        self.task_service.set_daily_checkin_with_plan_sync(
+            task_id,
+            period_service.get_local_today(),
+            True,
+        )
+        self.refresh_tasks()
+        self.data_changed.emit()
 
     def open_add_task_dialog(self):
         dialog = DailyTaskDialog(parent=self, task_service=self.task_service)
@@ -338,8 +354,8 @@ class CheckinPage(QWidget):
             self.start_date_label.setText("")
             return
 
-        now = datetime.now()
-        today = now.date()
+        today = period_service.get_local_today()
+        now = datetime.combine(today, datetime.now().time())
         current_monday = today - timedelta(days=today.weekday())
         checkin_statuses = self.checkin_service.get_checkin_statuses_by_task(task.task_id)
         checkin_dates = {date_str for date_str, is_completed in checkin_statuses.items() if is_completed}
@@ -378,7 +394,7 @@ class CheckinPage(QWidget):
         if checkin_dates:
             return datetime.fromisoformat(min(checkin_dates)).date()
 
-        return date.today()
+        return period_service.get_local_today()
 
     def get_task_available_date(self, task, created_date):
         period_start = self.get_date_part(task.period_start)

@@ -14,8 +14,12 @@ __pycache__/
 # 数据库文件
 data/*.db
 data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 data/*.sqlite
 data/*.sqlite3
+data/backups/
+data/quick_note/
 
 # 打包输出
 build/

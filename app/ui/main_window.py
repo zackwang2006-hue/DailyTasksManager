@@ -386,6 +386,8 @@ class MainWindow(QMainWindow):
     def exit_application(self):
         self.force_exit = True
         if hasattr(self, "floating_window"):
+            if hasattr(self.floating_window, "quick_note_view"):
+                self.floating_window.quick_note_view.final_save()
             self.floating_window.save_settings()
             self.floating_window.hide()
         if hasattr(self, "tray_manager"):

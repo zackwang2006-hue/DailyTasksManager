@@ -311,7 +311,7 @@ class TaskDialog(QDialog):
         self.set_deadline_datetime(
             QDateTime(
                 QDate(default_deadline.year, default_deadline.month, default_deadline.day),
-                QTime(default_deadline.hour, default_deadline.minute),
+                QTime(default_deadline.hour, default_deadline.minute, default_deadline.second),
             )
         )
 
@@ -387,14 +387,14 @@ class TaskDialog(QDialog):
             self.ddl_rule_label.setText("长期任务必须设置日期级 DDL")
 
         elif category == "daily":
-            # 每日任务：默认截止到次日 03:59，配合 4:00 日界线。
+            # 每日任务：默认截止到当天 23:59:59，按本地自然日结算。
             self.use_ddl_checkbox.setChecked(False)
             self.use_ddl_checkbox.setEnabled(False)
             self.ddl_datetime_input.setVisible(True)
             self.ddl_datetime_input.setEnabled(True)
             if self.task is None and not self._deadline_manually_changed:
                 self.set_daily_default_deadline()
-            self.ddl_rule_label.setText("每日任务默认截止到次日 03:59")
+            self.ddl_rule_label.setText("每日任务默认截止到当天 23:59:59")
 
         elif category == "extra":
             # 附加任务：可选 DDL

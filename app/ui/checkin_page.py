@@ -42,8 +42,7 @@ class CheckinPage(QWidget):
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
-        title_label = QLabel("打卡记录")
-        title_label.setText("每日任务")
+        title_label = QLabel("每日任务")
         title_label.setObjectName("TitleLabel")
 
         add_task_button = QPushButton("+ 新增每日任务")

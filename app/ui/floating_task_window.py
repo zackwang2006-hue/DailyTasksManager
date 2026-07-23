@@ -351,7 +351,7 @@ class FloatingTaskWindow(QWidget):
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(6)
 
-        self.title_label = QLabel("任务清单")
+        self.title_label = QLabel("日计划")
         self.title_label.setObjectName("FloatingTitle")
         self.title_label.setVisible(False)
 

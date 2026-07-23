@@ -1,5 +1,11 @@
+import shutil
 import sqlite3
+from datetime import datetime
+
 from app.config import DB_PATH, DATA_DIR
+
+
+PLAN_SCHEMA_MIGRATION = "20260723_plan_schema"
 
 
 CREATE_TASKS_TABLE_SQL = """
@@ -46,11 +52,22 @@ CREATE TABLE IF NOT EXISTS daily_checkins (
 );
 """
 
+CREATE_SCHEMA_MIGRATIONS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    name TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+"""
+
 
 class DBManager:
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.db_path = DB_PATH
+        self.had_existing_db = self.db_path.exists() and self.db_path.stat().st_size > 0
+        self.migration_backup_path = None
+        if self.had_existing_db and not self.migration_exists_in_database(PLAN_SCHEMA_MIGRATION):
+            self.backup_database_file(PLAN_SCHEMA_MIGRATION)
         self.init_db()
 
     def get_connection(self):
@@ -64,6 +81,7 @@ class DBManager:
             cursor.execute(CREATE_TASKS_TABLE_SQL)
             cursor.execute(CREATE_TASK_LOGS_TABLE_SQL)
             cursor.execute(CREATE_DAILY_CHECKINS_TABLE_SQL)
+            cursor.execute(CREATE_SCHEMA_MIGRATIONS_TABLE_SQL)
             self.migrate_tasks_table(cursor)
             self.migrate_task_logs_table(cursor)
             conn.commit()
@@ -71,6 +89,19 @@ class DBManager:
     def migrate_tasks_table(self, cursor):
         cursor.execute("PRAGMA table_info(tasks)")
         columns = {row["name"] for row in cursor.fetchall()}
+        plan_columns = {
+            "plan_level": "TEXT",
+            "period_key": "TEXT",
+            "period_start": "TEXT",
+            "period_end": "TEXT",
+            "archived": "INTEGER NOT NULL DEFAULT 0",
+            "parent_plan_task_id": "INTEGER",
+            "source_daily_task_id": "INTEGER",
+            "generated_date": "TEXT",
+        }
+        missing_plan_columns = set(plan_columns) - columns
+        if missing_plan_columns:
+            self.backup_before_migration(cursor, PLAN_SCHEMA_MIGRATION)
 
         if "task_type" not in columns:
             cursor.execute(
@@ -87,6 +118,10 @@ class DBManager:
                 "ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
             )
 
+        for column, definition in plan_columns.items():
+            if column not in columns:
+                cursor.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
+
         cursor.execute(
             """
             UPDATE tasks
@@ -95,6 +130,17 @@ class DBManager:
               AND (task_type IS NULL OR task_type = 'normal')
             """
         )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_daily_generated_unique
+            ON tasks(source_daily_task_id, generated_date)
+            WHERE source_daily_task_id IS NOT NULL
+              AND generated_date IS NOT NULL
+              AND COALESCE(is_deleted, 0) = 0
+            """
+        )
+        if missing_plan_columns or not self.is_migration_applied(cursor, PLAN_SCHEMA_MIGRATION):
+            self.mark_migration_applied(cursor, PLAN_SCHEMA_MIGRATION)
 
     def migrate_task_logs_table(self, cursor):
         cursor.execute("PRAGMA table_info(task_logs)")
@@ -102,6 +148,61 @@ class DBManager:
 
         if "record_date" not in columns:
             cursor.execute("ALTER TABLE task_logs ADD COLUMN record_date TEXT")
+
+    def backup_before_migration(self, cursor, migration_name):
+        if (
+            not self.had_existing_db
+            or self.migration_backup_path is not None
+            or self.is_migration_applied(cursor, migration_name)
+        ):
+            return
+        self.backup_database_file(migration_name)
+
+    def backup_database_file(self, migration_name):
+        backup_dir = self.db_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"{self.db_path.stem}_{migration_name}_{timestamp}{self.db_path.suffix}"
+        shutil.copy2(self.db_path, backup_path)
+        self.migration_backup_path = backup_path
+
+    def migration_exists_in_database(self, migration_name):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT 1
+                    FROM sqlite_master
+                    WHERE type = 'table'
+                      AND name = 'schema_migrations'
+                    """
+                )
+                if cursor.fetchone() is None:
+                    return False
+                cursor.execute(
+                    "SELECT 1 FROM schema_migrations WHERE name = ?",
+                    (migration_name,),
+                )
+                return cursor.fetchone() is not None
+        except sqlite3.DatabaseError:
+            return False
+
+    def is_migration_applied(self, cursor, migration_name):
+        cursor.execute(
+            "SELECT 1 FROM schema_migrations WHERE name = ?",
+            (migration_name,),
+        )
+        return cursor.fetchone() is not None
+
+    def mark_migration_applied(self, cursor, migration_name):
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO schema_migrations (name, applied_at)
+            VALUES (?, ?)
+            """,
+            (migration_name, datetime.now().isoformat(timespec="seconds")),
+        )
 
     def execute(self, sql, params=None):
         if params is None:

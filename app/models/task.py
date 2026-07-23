@@ -14,6 +14,14 @@ class Task:
     is_deleted: bool = False
     created_at: str | None = None
     completed_at: str | None = None
+    plan_level: str | None = None
+    period_key: str | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    archived: bool = False
+    parent_plan_task_id: int | None = None
+    source_daily_task_id: int | None = None
+    generated_date: str | None = None
 
     @classmethod
     def from_row(cls, row):
@@ -31,4 +39,12 @@ class Task:
             is_deleted=bool(row["is_deleted"]) if "is_deleted" in keys else False,
             created_at=row["created_at"],
             completed_at=row["completed_at"],
+            plan_level=row["plan_level"] if "plan_level" in keys else None,
+            period_key=row["period_key"] if "period_key" in keys else None,
+            period_start=row["period_start"] if "period_start" in keys else None,
+            period_end=row["period_end"] if "period_end" in keys else None,
+            archived=bool(row["archived"]) if "archived" in keys else False,
+            parent_plan_task_id=row["parent_plan_task_id"] if "parent_plan_task_id" in keys else None,
+            source_daily_task_id=row["source_daily_task_id"] if "source_daily_task_id" in keys else None,
+            generated_date=row["generated_date"] if "generated_date" in keys else None,
         )

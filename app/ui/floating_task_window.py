@@ -5,13 +5,15 @@ from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
     QPoint,
+    QRectF,
     QPropertyAnimation,
     QSettings,
+    QSize,
     Qt,
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -22,13 +24,16 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from app.config import APP_NAME, TASK_CATEGORIES
 from app.services.task_service import TaskService
+from app.ui.quick_note import QuickNoteView
 from app.ui.task_colors import get_task_card_color
+from app.ui.theme import RADIUS_WINDOW, THEME, floating_window_qss
 from app.utils.time_utils import format_task_time, get_daily_default_deadline, is_task_overdue
 
 
@@ -37,6 +42,9 @@ FILTER_TODAY = "today"
 FILTER_THREE_DAYS = "three_days"
 FILTER_SEVEN_DAYS = "seven_days"
 
+PAGE_TASKS = "tasks"
+PAGE_QUICK_NOTE = "quick_note"
+
 FILTER_ORDER = (FILTER_ALL, FILTER_TODAY, FILTER_THREE_DAYS, FILTER_SEVEN_DAYS)
 FILTER_LABELS = {
     FILTER_ALL: "全部",
@@ -44,50 +52,23 @@ FILTER_LABELS = {
     FILTER_THREE_DAYS: "近三日",
     FILTER_SEVEN_DAYS: "近七日",
 }
+PAGE_ORDER = (PAGE_TASKS, PAGE_QUICK_NOTE)
+PAGE_LABELS = {
+    PAGE_TASKS: "任务清单",
+    PAGE_QUICK_NOTE: "随手记",
+}
 
 OPACITY_MIN = 20
 OPACITY_MAX = 100
 SNAP_THRESHOLD = 24
 AUTO_HIDE_VISIBLE_SIZE = 36
 AUTO_HIDE_DELAY_MS = 800
-
-SCROLLBAR_STYLE = """
-            QScrollBar:vertical {
-                width: 10px;
-                background: transparent;
-                margin: 4px 2px 4px 2px;
-            }
-
-            QScrollBar::handle:vertical {
-                background: #d1d5db;
-                border-radius: 5px;
-                min-height: 40px;
-            }
-
-            QScrollBar::handle:vertical:hover {
-                background: #9ca3af;
-            }
-
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 0px;
-                background: transparent;
-            }
-
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: transparent;
-            }
-
-            QScrollBar:horizontal {
-                height: 0px;
-                background: transparent;
-            }
-
-            QScrollBar::handle:horizontal {
-                background: transparent;
-            }
-"""
+EXPANDED_DEFAULT_WIDTH = 360
+EXPANDED_DEFAULT_HEIGHT = 582
+EXPANDED_MIN_WIDTH = 320
+EXPANDED_MIN_HEIGHT = 420
+COLLAPSED_WIDTH = 320
+COLLAPSED_HEIGHT = 58
 
 SECTION_ORDER = (
     ("short", "短期任务"),
@@ -96,6 +77,64 @@ SECTION_ORDER = (
     ("timed", "定时任务"),
     ("extra", "附加任务"),
 )
+
+
+class CurrentPageStack(QStackedWidget):
+    def sizeHint(self):
+        return QSize(EXPANDED_DEFAULT_WIDTH, EXPANDED_DEFAULT_HEIGHT)
+
+    def minimumSizeHint(self):
+        return QSize(0, 0)
+
+
+class WindowIconButton(QPushButton):
+    def __init__(self, icon_name, parent=None):
+        super().__init__(parent)
+        self.icon_name = icon_name
+        self.setProperty("role", "windowControl")
+        self.setFixedSize(34, 34)
+        self.setText("")
+
+    def set_icon_name(self, icon_name):
+        self.icon_name = icon_name
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHints(
+            QPainter.Antialiasing
+            | QPainter.TextAntialiasing
+            | QPainter.SmoothPixmapTransform
+        )
+        color = QColor(THEME["accent"] if self.isChecked() else "#334155")
+        if self.icon_name == "close" and self.underMouse():
+            color = QColor(THEME["danger"])
+        painter.setPen(QPen(color, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        rect = self.rect()
+        cx = rect.center().x()
+        cy = rect.center().y()
+
+        if self.icon_name == "collapse":
+            path = QPainterPath()
+            path.moveTo(cx - 6, cy - 2)
+            path.lineTo(cx, cy + 4)
+            path.lineTo(cx + 6, cy - 2)
+            painter.drawPath(path)
+        elif self.icon_name == "expand":
+            path = QPainterPath()
+            path.moveTo(cx - 6, cy + 3)
+            path.lineTo(cx, cy - 3)
+            path.lineTo(cx + 6, cy + 3)
+            painter.drawPath(path)
+        elif self.icon_name == "pin":
+            painter.drawLine(cx, cy - 7, cx, cy + 6)
+            painter.drawLine(cx - 5, cy - 3, cx + 5, cy - 3)
+            painter.drawLine(cx - 3, cy - 7, cx + 3, cy - 7)
+            painter.drawLine(cx - 3, cy + 6, cx + 3, cy + 6)
+        elif self.icon_name == "close":
+            painter.drawLine(cx - 5, cy - 5, cx + 5, cy + 5)
+            painter.drawLine(cx + 5, cy - 5, cx - 5, cy + 5)
 
 
 class FloatingTaskItem(QFrame):
@@ -188,7 +227,6 @@ class FloatingTaskItem(QFrame):
         border_color, background_color, text_color = get_task_card_color(self.task)
         pin_background = background_color if self.is_pinned else "#ffffff"
         pin_text_color = text_color if self.is_pinned else "#666666"
-        pin_border_color = border_color if self.is_pinned else "#666666"
         self.setStyleSheet(f"""
             QFrame#FloatingTaskItem {{
                 background-color: {background_color};
@@ -211,25 +249,32 @@ class FloatingTaskItem(QFrame):
 
             QPushButton#PinTaskButton {{
                 padding: 0;
-                border-radius: 6px;
-                border: 1px solid {pin_border_color};
+                border-radius: 7px;
+                border: 1px solid #CBD5E1;
                 background-color: {pin_background};
                 color: {pin_text_color};
                 font-size: 15px;
-                font-weight: bold;
+                font-weight: 600;
             }}
 
             QPushButton#PinTaskButton:hover {{
-                border: 1px solid #333333;
+                border: 1px solid #94A3B8;
+                background-color: #F1F5F9;
             }}
 
             QPushButton#CompleteButton {{
-                padding: 5px 10px;
-                border-radius: 5px;
-                border: 1px solid #1d4ed8;
-                background-color: #2d8cff;
-                color: white;
-                font-weight: bold;
+                min-height: 32px;
+                padding: 4px 12px;
+                border-radius: 8px;
+                border: 1px solid #8FAFD3;
+                background-color: #E8F1FC;
+                color: #315F98;
+                font-weight: 600;
+            }}
+
+            QPushButton#CompleteButton:hover {{
+                background-color: #D7E7F8;
+                border-color: #7FA3CE;
             }}
         """)
 
@@ -265,6 +310,7 @@ class FloatingTaskWindow(QWidget):
         super().__init__(parent)
         self.task_service = TaskService()
         self.settings = QSettings(APP_NAME, "FloatingWindow")
+        self.current_page = PAGE_TASKS
         self.current_filter = FILTER_ALL
         self.is_collapsed = False
         self.is_window_pinned = self.settings.value("pinned", True, type=bool)
@@ -285,17 +331,24 @@ class FloatingTaskWindow(QWidget):
         self._reposition_pending = False
         self._mouse_inside = False
         self._interacting_inside = False
+        self._changing_collapsed_state = False
+        self.expanded_size = QSize(EXPANDED_DEFAULT_WIDTH, EXPANDED_DEFAULT_HEIGHT)
+        self.task_scroll_positions = {}
+        self.expanded_task_ids = set()
 
         self.setWindowTitle("任务清单")
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, self.is_window_pinned)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.resize(360, 460)
+        self.setMinimumSize(EXPANDED_MIN_WIDTH, EXPANDED_MIN_HEIGHT)
+        self.resize(EXPANDED_DEFAULT_WIDTH, EXPANDED_DEFAULT_HEIGHT)
 
         self.init_ui()
         self.restore_settings()
         self.refresh_tasks()
         self.apply_collapsed_state()
+        if self.is_collapsed:
+            self.apply_collapsed_geometry()
         self.ensure_inside_screen()
         if self.should_auto_hide_after_snap():
             self.apply_auto_hide()
@@ -309,41 +362,64 @@ class FloatingTaskWindow(QWidget):
         root_layout.addWidget(self.root_frame)
 
         self.root_content_layout = QVBoxLayout(self.root_frame)
-        self.root_content_layout.setContentsMargins(10, 8, 10, 10)
-        self.root_content_layout.setSpacing(8)
+        self.root_content_layout.setContentsMargins(14, 12, 14, 14)
+        self.root_content_layout.setSpacing(12)
 
         self.title_bar = QFrame()
         self.title_bar.setObjectName("FloatingTitleBar")
+        self.title_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.title_bar.setFixedHeight(44)
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(6)
 
         self.title_label = QLabel("任务清单")
         self.title_label.setObjectName("FloatingTitle")
+        self.title_label.setVisible(False)
 
-        self.collapse_button = QPushButton("▾")
+        self.page_group = QButtonGroup(self)
+        self.page_group.setExclusive(True)
+        self.page_buttons = {}
+        self.page_switch_frame = QFrame()
+        self.page_switch_frame.setObjectName("PageSwitchFrame")
+        self.page_switch_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        page_switch_layout = QHBoxLayout(self.page_switch_frame)
+        page_switch_layout.setContentsMargins(2, 2, 2, 2)
+        page_switch_layout.setSpacing(2)
+        for page_key in PAGE_ORDER:
+            button = QPushButton(PAGE_LABELS[page_key])
+            button.setObjectName("PageButton")
+            button.setCheckable(True)
+            button.setMinimumWidth(0)
+            button.setFixedHeight(32)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            button.clicked.connect(lambda checked=False, selected=page_key: self.set_page(selected))
+            self.page_group.addButton(button)
+            self.page_buttons[page_key] = button
+            page_switch_layout.addWidget(button)
+        title_layout.addWidget(self.page_switch_frame, 1)
+
+        self.collapse_button = WindowIconButton("collapse")
         self.collapse_button.setObjectName("TitleButton")
-        self.collapse_button.setFixedSize(32, 26)
         self.collapse_button.clicked.connect(self.toggle_collapsed)
 
-        self.pin_window_button = QPushButton("⌖")
+        self.pin_window_button = WindowIconButton("pin")
         self.pin_window_button.setObjectName("WindowPinButton")
         self.pin_window_button.setCheckable(True)
-        self.pin_window_button.setFixedSize(32, 26)
         self.pin_window_button.clicked.connect(self.toggle_window_pinned)
 
-        self.close_button = QPushButton("×")
+        self.close_button = WindowIconButton("close")
         self.close_button.setObjectName("TitleButton")
-        self.close_button.setFixedSize(32, 26)
+        self.close_button.setProperty("role", "dangerWindowControl")
         self.close_button.clicked.connect(self.hide_window)
 
-        title_layout.addWidget(self.title_label, 1)
         title_layout.addWidget(self.collapse_button)
         title_layout.addWidget(self.pin_window_button)
         title_layout.addWidget(self.close_button)
 
         self.filter_frame = QFrame()
         self.filter_frame.setObjectName("FilterFrame")
+        self.filter_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         filter_layout = QHBoxLayout(self.filter_frame)
         filter_layout.setContentsMargins(0, 0, 0, 0)
         filter_layout.setSpacing(6)
@@ -354,11 +430,13 @@ class FloatingTaskWindow(QWidget):
             button = QPushButton(FILTER_LABELS[filter_key])
             button.setObjectName("FilterButton")
             button.setCheckable(True)
-            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            button.setFixedSize(68, 32)
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             button.clicked.connect(lambda checked=False, selected=filter_key: self.set_filter(selected))
             self.filter_group.addButton(button)
             self.filter_buttons[filter_key] = button
             filter_layout.addWidget(button)
+        filter_layout.addStretch(1)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setObjectName("TaskScrollArea")
@@ -373,109 +451,56 @@ class FloatingTaskWindow(QWidget):
         self.task_layout.setAlignment(Qt.AlignTop)
         self.scroll_area.setWidget(self.task_container)
 
-        self.root_content_layout.addWidget(self.title_bar)
-        self.root_content_layout.addWidget(self.filter_frame)
-        self.root_content_layout.addWidget(self.scroll_area, 1)
+        self.quick_note_view = QuickNoteView(self)
+        self.quick_note_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        for widget in (self.root_frame, self.title_bar, self.title_label, self.task_container):
+        self.content_stack = CurrentPageStack()
+        self.content_stack.setObjectName("FloatingContentStack")
+        self.content_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.task_page = QWidget()
+        self.task_page.setObjectName("FloatingTaskPage")
+        self.task_page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        task_page_layout = QVBoxLayout(self.task_page)
+        task_page_layout.setContentsMargins(0, 0, 0, 0)
+        task_page_layout.setSpacing(8)
+        task_page_layout.addWidget(self.filter_frame, 0)
+        task_page_layout.addWidget(self.scroll_area, 1)
+
+        self.quick_note_page = QWidget()
+        self.quick_note_page.setObjectName("FloatingQuickNotePage")
+        self.quick_note_page.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        quick_note_page_layout = QVBoxLayout(self.quick_note_page)
+        quick_note_page_layout.setContentsMargins(0, 0, 0, 0)
+        quick_note_page_layout.setSpacing(0)
+        quick_note_page_layout.addWidget(self.quick_note_view, 1)
+
+        self.content_stack.addWidget(self.task_page)
+        self.content_stack.addWidget(self.quick_note_page)
+
+        self.root_content_layout.addWidget(self.title_bar, 0)
+        self.root_content_layout.addWidget(self.content_stack, 1)
+
+        for widget in (self.root_frame, self.title_bar, self.title_label, self.task_page, self.task_container):
             widget.installEventFilter(self)
 
         self.update_pin_button_text()
-        self.setStyleSheet("""
-            QFrame#FloatingRoot {
-                background-color: #ffffff;
-                border: 1px solid #111111;
-                border-radius: 12px;
-            }
+        self.setStyleSheet(floating_window_qss())
 
-            QFrame#FloatingTitleBar {
-                background-color: transparent;
-            }
-
-            QLabel#FloatingTitle {
-                font-size: 15px;
-                font-weight: bold;
-                color: #111827;
-                background-color: transparent;
-            }
-
-            QPushButton#TitleButton {
-                border: 1px solid #111111;
-                border-radius: 5px;
-                background-color: #ffffff;
-                color: #111827;
-                font-weight: bold;
-                padding: 0;
-            }
-
-            QPushButton#TitleButton:hover {
-                background-color: #e5e7eb;
-            }
-
-            QPushButton#TitleButton:checked {
-                background-color: #dbeafe;
-                color: #111827;
-            }
-
-            QPushButton#WindowPinButton {
-                border: 1px solid #333333;
-                border-radius: 6px;
-                background-color: #ffffff;
-                color: #666666;
-                font-size: 15px;
-                font-weight: bold;
-                padding: 0;
-            }
-
-            QPushButton#WindowPinButton:hover {
-                background-color: #f3f4f6;
-                color: #111111;
-            }
-
-            QPushButton#WindowPinButton:checked {
-                background-color: #DCEBFF;
-                color: #111111;
-                border: 1px solid #333333;
-            }
-
-            QPushButton#FilterButton {
-                color: #111827;
-                background-color: #ffffff;
-                border: 1px solid #111111;
-                border-radius: 6px;
-                padding: 6px 4px;
-                text-align: center;
-            }
-
-            QPushButton#FilterButton:checked {
-                background-color: #dbeafe;
-                color: #111827;
-                font-weight: bold;
-            }
-
-            QScrollArea#TaskScrollArea {
-                border: none;
-                background-color: transparent;
-            }
-
-            QWidget {
-                background-color: transparent;
-            }
-
-            QLabel#EmptyLabel {
-                color: #111827;
-                padding: 16px;
-                background-color: transparent;
-            }
-
-            QLabel#SectionTitle {
-                color: #111827;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 6px 2px 2px 2px;
-                background-color: transparent;
-            }
-        """ + SCROLLBAR_STYLE)
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHints(
+            QPainter.Antialiasing
+            | QPainter.TextAntialiasing
+            | QPainter.SmoothPixmapTransform
+        )
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(rect, RADIUS_WINDOW, RADIUS_WINDOW)
+        painter.fillPath(path, QColor(248, 250, 252, 225))
+        painter.setPen(QPen(QColor(203, 213, 225, 180), 1))
+        painter.drawPath(path)
+        super().paintEvent(event)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
@@ -826,6 +851,12 @@ class FloatingTaskWindow(QWidget):
         self.auto_hide_enabled = self.settings.value("auto_hide_enabled", True, type=bool)
         self.snap_edge = self.normalize_snap_edge(self.settings.value("snap_edge", self.snap_edge))
         self.snap_corner = self.normalize_snap_corner(self.settings.value("snap_corner", self.snap_corner))
+        self.is_collapsed = self.settings.value("collapsed", self.is_collapsed, type=bool)
+        saved_filter = self.settings.value("filter", self.current_filter)
+        if saved_filter == PAGE_QUICK_NOTE:
+            saved_filter = FILTER_ALL
+        if saved_filter in FILTER_LABELS:
+            self.current_filter = saved_filter
 
         pos = self.settings.value("pos")
         if isinstance(pos, QPoint):
@@ -834,11 +865,15 @@ class FloatingTaskWindow(QWidget):
         checked_button = self.filter_buttons.get(self.current_filter)
         if checked_button is not None:
             checked_button.setChecked(True)
+        checked_page_button = self.page_buttons.get(self.current_page)
+        if checked_page_button is not None:
+            checked_page_button.setChecked(True)
 
     def save_settings(self):
         self.settings.setValue("pos", self.visible_position_for_saved_settings())
         self.settings.setValue("opacity", self.clamp_opacity(int(self.windowOpacity() * 100)))
         self.settings.setValue("collapsed", self.is_collapsed)
+        self.settings.setValue("page", self.current_page)
         self.settings.setValue("filter", self.current_filter)
         self.settings.setValue("visible", self.isVisible())
         self.settings.setValue("pinned", self.is_window_pinned)
@@ -847,7 +882,11 @@ class FloatingTaskWindow(QWidget):
         self.settings.setValue("snap_corner", self.snap_corner or "")
 
     def show_window(self):
-        self.refresh_tasks()
+        if self.current_page == PAGE_QUICK_NOTE:
+            self.show_quick_note()
+        else:
+            self.show_task_list()
+            self.refresh_tasks()
         self.show()
         if self.is_auto_hidden:
             self.apply_auto_hide()
@@ -858,6 +897,7 @@ class FloatingTaskWindow(QWidget):
         self.settings.setValue("visible", True)
 
     def hide_window(self):
+        self.quick_note_view.final_save()
         self.save_settings()
         self.hide()
         self.settings.setValue("visible", False)
@@ -868,14 +908,56 @@ class FloatingTaskWindow(QWidget):
     def set_filter(self, filter_key):
         if filter_key not in FILTER_LABELS:
             return
+        self.remember_task_page_state(self.current_filter)
         self.current_filter = filter_key
         self.settings.setValue("filter", filter_key)
         button = self.filter_buttons.get(filter_key)
         if button is not None and not button.isChecked():
             button.setChecked(True)
+        if self.current_page != PAGE_TASKS:
+            self.set_page(PAGE_TASKS)
+            return
+        self.show_task_list()
         self.refresh_tasks()
 
+    def set_page(self, page_key):
+        if page_key not in PAGE_LABELS:
+            return
+        if self.current_page == PAGE_TASKS:
+            self.remember_task_page_state(self.current_filter)
+        elif self.current_page == PAGE_QUICK_NOTE and page_key != PAGE_QUICK_NOTE:
+            self.quick_note_view.final_save()
+
+        self.current_page = page_key
+        self.settings.setValue("page", page_key)
+        button = self.page_buttons.get(page_key)
+        if button is not None and not button.isChecked():
+            button.setChecked(True)
+
+        if page_key == PAGE_QUICK_NOTE:
+            self.show_quick_note()
+            return
+        self.show_task_list()
+        self.refresh_tasks()
+
+    def show_task_list(self):
+        self.content_stack.setCurrentWidget(self.task_page)
+        self.filter_frame.setVisible(not self.is_collapsed)
+        self.content_stack.setVisible(not self.is_collapsed)
+
+    def show_quick_note(self):
+        self.content_stack.setCurrentWidget(self.quick_note_page)
+        self.filter_frame.setVisible(False)
+        self.content_stack.setVisible(not self.is_collapsed)
+        if not self.is_collapsed:
+            self.quick_note_view.editor.setFocus()
+        self.update_collapsed_text()
+        self.schedule_reposition_after_resize()
+
     def refresh_tasks(self):
+        if self.current_page != PAGE_TASKS:
+            return
+        self.remember_task_page_state(self.current_filter)
         self.clear_task_layout()
         tasks = self.get_filtered_tasks()
 
@@ -893,6 +975,7 @@ class FloatingTaskWindow(QWidget):
 
         self.task_layout.addStretch()
         self.update_collapsed_text()
+        self.restore_task_page_state(self.current_filter)
         self.schedule_reposition_after_resize()
 
     def add_grouped_tasks(self, tasks):
@@ -928,12 +1011,32 @@ class FloatingTaskWindow(QWidget):
         item.interaction_started.connect(self.begin_internal_interaction)
         item.interaction_finished.connect(self.end_internal_interaction)
         self.task_layout.addWidget(item)
+        item.set_expanded(task.task_id in self.expanded_task_ids)
 
     def handle_task_item_expanded(self):
+        self.remember_expanded_task_items()
         self.begin_internal_interaction()
         if self.is_auto_hidden:
             self.show_from_auto_hide()
         self.schedule_reposition_after_resize()
+
+    def remember_task_page_state(self, filter_key):
+        if filter_key not in FILTER_LABELS:
+            return
+        self.task_scroll_positions[filter_key] = self.scroll_area.verticalScrollBar().value()
+        self.remember_expanded_task_items()
+
+    def restore_task_page_state(self, filter_key):
+        scroll_value = self.task_scroll_positions.get(filter_key, 0)
+        QTimer.singleShot(0, lambda: self.scroll_area.verticalScrollBar().setValue(scroll_value))
+
+    def remember_expanded_task_items(self):
+        expanded_ids = set()
+        for index in range(self.task_layout.count()):
+            widget = self.task_layout.itemAt(index).widget()
+            if isinstance(widget, FloatingTaskItem) and widget.is_expanded:
+                expanded_ids.add(widget.task.task_id)
+        self.expanded_task_ids = expanded_ids
 
     def clear_task_layout(self):
         while self.task_layout.count():
@@ -1081,38 +1184,74 @@ class FloatingTaskWindow(QWidget):
             self.title_label.setText(text)
 
     def toggle_collapsed(self):
+        self.set_collapsed(not self.is_collapsed)
+
+    def set_collapsed(self, collapsed):
         was_auto_hidden = self.is_auto_hidden
         if was_auto_hidden:
             self.show_from_auto_hide()
         self.cancel_auto_hide_timer()
-        self.is_collapsed = not self.is_collapsed
-        self.apply_collapsed_state()
+        if collapsed and not self.is_collapsed:
+            self.expanded_size = QSize(
+                max(self.width(), EXPANDED_MIN_WIDTH),
+                max(self.height(), EXPANDED_MIN_HEIGHT),
+            )
+        self._changing_collapsed_state = True
+        try:
+            self.is_collapsed = bool(collapsed)
+            self.apply_collapsed_state()
+            self.root_content_layout.invalidate()
+            self.root_content_layout.activate()
+            self.root_frame.updateGeometry()
+            self.updateGeometry()
+            if self.is_collapsed:
+                self.apply_collapsed_geometry()
+            else:
+                self.restore_expanded_geometry()
+        finally:
+            self._changing_collapsed_state = False
         self.reposition_after_resize()
         if was_auto_hidden and self.should_auto_hide_after_snap():
             self.apply_auto_hide()
         self.save_settings()
 
     def apply_collapsed_state(self):
-        self.filter_frame.setVisible(not self.is_collapsed)
-        self.scroll_area.setVisible(not self.is_collapsed)
+        self.filter_frame.setVisible(not self.is_collapsed and self.current_page == PAGE_TASKS)
+        self.content_stack.setVisible(not self.is_collapsed)
+        if self.current_page == PAGE_QUICK_NOTE:
+            self.content_stack.setCurrentWidget(self.quick_note_page)
+        else:
+            self.content_stack.setCurrentWidget(self.task_page)
         self.close_button.setVisible(not self.is_collapsed)
-        self.collapse_button.setText("▴" if self.is_collapsed else "▾")
+        self.collapse_button.set_icon_name("expand" if self.is_collapsed else "collapse")
         self.title_label.setText("任务清单")
         if self.is_collapsed:
             self.update_collapsed_text()
-            self.root_content_layout.setContentsMargins(10, 8, 10, 8)
-            self.setFixedSize(260, 46)
+            self.root_content_layout.setContentsMargins(14, 6, 14, 6)
         else:
-            self.root_content_layout.setContentsMargins(10, 8, 10, 10)
-            self.setMinimumWidth(320)
-            self.setMaximumWidth(16777215)
-            self.setMinimumHeight(300)
-            self.setMaximumHeight(16777215)
-            self.resize(max(self.width(), 360), 460)
+            self.root_content_layout.setContentsMargins(14, 12, 14, 14)
+
+    def apply_collapsed_geometry(self):
+        self.setFixedSize(COLLAPSED_WIDTH, COLLAPSED_HEIGHT)
+
+    def restore_expanded_geometry(self):
+        self.setMinimumWidth(EXPANDED_MIN_WIDTH)
+        self.setMaximumWidth(16777215)
+        self.setMinimumHeight(EXPANDED_MIN_HEIGHT)
+        self.setMaximumHeight(16777215)
+        target = self.expanded_size if self.expanded_size.isValid() else QSize(
+            EXPANDED_DEFAULT_WIDTH,
+            EXPANDED_DEFAULT_HEIGHT,
+        )
+        self.resize(max(target.width(), EXPANDED_MIN_WIDTH), max(target.height(), EXPANDED_MIN_HEIGHT))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.drag_start_pos is None:
+        if not self.is_collapsed and not self._changing_collapsed_state and self.drag_start_pos is None:
+            self.expanded_size = QSize(
+                max(self.width(), EXPANDED_MIN_WIDTH),
+                max(self.height(), EXPANDED_MIN_HEIGHT),
+            )
             self.schedule_reposition_after_resize()
 
     def toggle_window_pinned(self):
@@ -1124,9 +1263,9 @@ class FloatingTaskWindow(QWidget):
         self.save_settings()
 
     def update_pin_button_text(self):
-        self.pin_window_button.setText("⌖")
         self.pin_window_button.setChecked(self.is_window_pinned)
         self.pin_window_button.setToolTip("取消置顶" if self.is_window_pinned else "置顶窗口")
+        self.pin_window_button.update()
 
     def apply_context_menu_style(self, menu):
         menu.setObjectName("FloatingContextMenu")

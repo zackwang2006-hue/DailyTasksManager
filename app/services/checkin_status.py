@@ -1,7 +1,4 @@
-from datetime import date as date_cls, datetime, time
-
-
-CHECKIN_DEADLINE = time(3, 59)
+from datetime import date as date_cls, datetime
 
 
 def get_task_effective_date(task, fallback=None):
@@ -23,11 +20,12 @@ def get_task_end_date(task):
     return None
 
 
-def get_checkin_cell_status(task, day, now, completed_dates):
+def get_checkin_cell_status(task, day, now, completed_dates, missed_dates=None):
     today = now.date()
     start_date = get_task_effective_date(task)
     end_date = get_task_end_date(task)
     date_str = day.isoformat()
+    missed_dates = missed_dates or set()
 
     if start_date is not None and day < start_date:
         return "disabled"
@@ -42,9 +40,10 @@ def get_checkin_cell_status(task, day, now, completed_dates):
         return "completed"
 
     if day == today:
-        if now.time() > CHECKIN_DEADLINE:
-            return "missed"
         return "today_pending"
+
+    if date_str in missed_dates:
+        return "missed"
 
     return "missed"
 

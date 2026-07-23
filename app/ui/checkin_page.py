@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from app.services.checkin_service import CheckinService
 from app.services.task_service import TaskService
 from app.ui.daily_task_dialog import DailyTaskDialog
+from app.ui.theme import apply_dark_context_menu_style
 
 
 class CheckinPage(QWidget):
@@ -261,9 +262,12 @@ class CheckinPage(QWidget):
 
     def open_task_menu(self, task, source, position):
         menu = QMenu(self)
+        apply_dark_context_menu_style(menu)
         edit_action = menu.addAction("编辑每日任务")
         delete_action = menu.addAction("删除每日任务")
 
+        if not menu.actions():
+            return
         selected_action = menu.exec(source.mapToGlobal(position))
 
         if selected_action == edit_action:
@@ -337,7 +341,8 @@ class CheckinPage(QWidget):
         now = datetime.now()
         today = now.date()
         current_monday = today - timedelta(days=today.weekday())
-        checkin_dates = self.checkin_service.get_checkin_dates_by_task(task.task_id)
+        checkin_statuses = self.checkin_service.get_checkin_statuses_by_task(task.task_id)
+        checkin_dates = {date_str for date_str, is_completed in checkin_statuses.items() if is_completed}
         created_date = self.get_date_part(task.created_at)
         available_date = self.get_task_available_date(task, created_date)
         start_date = self.get_task_start_date(available_date, checkin_dates)
@@ -356,7 +361,7 @@ class CheckinPage(QWidget):
                     date_str,
                     created_date,
                     available_date,
-                    checkin_dates,
+                    checkin_statuses,
                     now,
                 )
 
@@ -401,8 +406,8 @@ class CheckinPage(QWidget):
 
         return streak_days
 
-    def get_day_status(self, day, date_str, created_date, available_date, checkin_dates, now):
-        if date_str in checkin_dates:
+    def get_day_status(self, day, date_str, created_date, available_date, checkin_statuses, now):
+        if checkin_statuses.get(date_str) is True:
             return "done"
 
         today = now.date()
@@ -412,8 +417,7 @@ class CheckinPage(QWidget):
         if available_date and day < available_date:
             return "disabled"
 
-        yesterday = today - timedelta(days=1)
-        if day == yesterday and now.time() >= time(4, 0):
+        if day < today:
             return "missed"
 
         return "normal"

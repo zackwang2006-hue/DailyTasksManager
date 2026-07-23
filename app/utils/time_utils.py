@@ -3,14 +3,12 @@ from datetime import date, datetime, time, timedelta
 
 def get_business_date(now=None):
     now = now or datetime.now()
-    if now.time() < time(4, 0):
-        return now.date() - timedelta(days=1)
     return now.date()
 
 
 def get_daily_default_deadline(now=None):
     today = (now or datetime.now()).date()
-    return datetime.combine(today + timedelta(days=1), time(3, 59))
+    return datetime.combine(today, time(23, 59, 59))
 
 
 def parse_task_datetime(value):

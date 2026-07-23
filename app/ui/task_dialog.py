@@ -18,6 +18,7 @@ from PySide6.QtCore import QDate, QDateTime, QTime, Qt
 from PySide6.QtGui import QColor, QPen
 
 from app.config import TASK_CATEGORIES
+from app.models.plan import PlanLevel
 from app.utils.time_utils import get_daily_default_deadline
 
 
@@ -65,10 +66,12 @@ class CurrentMonthCalendar(QCalendarWidget):
 
 
 class TaskDialog(QDialog):
-    def __init__(self, task=None, parent=None):
+    def __init__(self, task=None, parent=None, mode="legacy", plan_level=None):
         super().__init__(parent)
 
         self.task = task
+        self.mode = mode
+        self.plan_level = self.normalize_plan_level(plan_level or getattr(task, "plan_level", None))
         self._applying_deadline_default = False
         self._deadline_manually_changed = False
         self.setWindowTitle("编辑任务" if task else "新增任务")
@@ -154,13 +157,17 @@ class TaskDialog(QDialog):
         button_layout.addWidget(cancel_button)
         button_layout.addWidget(confirm_button)
 
-        layout.addWidget(QLabel("任务标题"))
+        self.title_label = QLabel("任务标题")
+        self.description_label = QLabel("任务描述")
+        self.category_label = QLabel("任务分类")
+
+        layout.addWidget(self.title_label)
         layout.addWidget(self.title_input)
 
-        layout.addWidget(QLabel("任务描述"))
+        layout.addWidget(self.description_label)
         layout.addWidget(self.description_input)
 
-        layout.addWidget(QLabel("任务分类"))
+        layout.addWidget(self.category_label)
         layout.addWidget(self.category_combo)
 
         layout.addWidget(self.is_timed_checkbox)
@@ -323,6 +330,20 @@ class TaskDialog(QDialog):
         self.update_ddl_rule()
 
     def update_ddl_rule(self):
+        if self.is_plan_mode():
+            self.category_label.setVisible(False)
+            self.category_combo.setVisible(False)
+            self.is_timed_checkbox.setVisible(False)
+            self.scheduled_date_label.setVisible(False)
+            self.scheduled_date_input.setVisible(False)
+            self.scheduled_time_label.setVisible(False)
+            self.scheduled_time_input.setVisible(False)
+            self.use_ddl_checkbox.setVisible(False)
+            self.ddl_input.setVisible(False)
+            self.ddl_datetime_input.setVisible(False)
+            self.ddl_rule_label.setVisible(False)
+            return
+
         category = self.category_combo.currentData()
         is_timed = category == "timed"
 
@@ -419,7 +440,7 @@ class TaskDialog(QDialog):
             QMessageBox.warning(self, "提示", "任务标题不能为空")
             return
 
-        if self.category_combo.currentData() is None:
+        if not self.is_plan_mode() and self.category_combo.currentData() is None:
             QMessageBox.warning(self, "提示", "请选择任务类型")
             return
 
@@ -428,6 +449,17 @@ class TaskDialog(QDialog):
     def get_task_data(self):
         title = self.title_input.text().strip()
         description = self.description_input.toPlainText().strip()
+        if self.is_plan_mode():
+            return {
+                "title": title,
+                "description": description,
+                "category": "plan",
+                "ddl": None,
+                "task_type": "normal",
+                "scheduled_at": None,
+                "plan_level": self.plan_level.value if self.plan_level else None,
+            }
+
         category = self.category_combo.currentData()
         is_timed = category == "timed"
 
@@ -476,6 +508,9 @@ class TaskDialog(QDialog):
         self.title_input.setText(self.task.title)
         self.description_input.setPlainText(self.task.description)
 
+        if self.is_plan_mode():
+            return
+
         category = "timed" if self.task.task_type == "timed" else self.task.category
         index = self.category_combo.findData(category)
         if index >= 0:
@@ -508,3 +543,12 @@ class TaskDialog(QDialog):
                     self.scheduled_time_input.setTime(scheduled_time)
             except TypeError:
                 pass
+    def is_plan_mode(self):
+        return self.mode == "plan"
+
+    def normalize_plan_level(self, plan_level):
+        if plan_level is None:
+            return None
+        if isinstance(plan_level, PlanLevel):
+            return plan_level
+        return PlanLevel(str(plan_level))

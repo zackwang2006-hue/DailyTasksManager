@@ -11,14 +11,13 @@ from app.utils.startup_manager import (
 )
 
 
-def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"enable", "disable"}:
+def run_startup_helper_action(action: str) -> int:
+    if action not in {"enable", "disable"}:
         write_startup_manager_log(
-            f"startup_elevated_helper invalid args={sys.argv}, admin={is_running_as_admin()}"
+            f"startup_elevated_helper invalid action={action}, admin={is_running_as_admin()}"
         )
         return 2
 
-    action = sys.argv[1]
     write_startup_manager_log(
         "startup_elevated_helper started "
         f"action={action}, admin={is_running_as_admin()}, sys.executable={sys.executable}"
@@ -43,6 +42,16 @@ def main() -> int:
 
     write_startup_manager_log("startup_elevated_helper disable failed")
     return result.returncode or 1
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in {"enable", "disable"}:
+        write_startup_manager_log(
+            f"startup_elevated_helper invalid args={sys.argv}, admin={is_running_as_admin()}"
+        )
+        return 2
+
+    return run_startup_helper_action(sys.argv[1])
 
 
 if __name__ == "__main__":

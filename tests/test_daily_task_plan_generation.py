@@ -97,7 +97,7 @@ class DailyTaskPlanGenerationTests(unittest.TestCase):
         parent_id = self.create_parent(service)
         daily_id = service.add_daily_task_rule("daily", "", parent_id, today=date(2026, 7, 23))
 
-        service.complete_task(parent_id)
+        service.complete_task(parent_id, "完成情况记录")
         service.ensure_daily_plan_tasks_for_date(date(2026, 7, 24))
 
         self.assertIn("2026-07-24", [row["generated_date"] for row in self.generated_rows(service, daily_id)])
@@ -135,7 +135,7 @@ class DailyTaskPlanGenerationTests(unittest.TestCase):
         daily_id = service.add_daily_task_rule("daily", "", parent_id, today=date(2026, 7, 23))
         generated = service.get_generated_daily_plan_task(daily_id, date(2026, 7, 23))
 
-        service.complete_task(generated.task_id)
+        service.complete_task(generated.task_id, "完成情况记录")
 
         row = service.db.fetch_one(
             "SELECT is_completed FROM daily_checkins WHERE task_id = ? AND checkin_date = ?",

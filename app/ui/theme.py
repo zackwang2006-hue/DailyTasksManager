@@ -71,44 +71,9 @@ QScrollBar::sub-page:horizontal {
 
 
 def apply_dark_context_menu_style(menu):
-    menu.setStyleSheet("""
-        QMenu {
-            background-color: #101010;
-            color: #B8B8B8;
-            border: 1px solid #363636;
-            border-radius: 8px;
-            padding: 5px;
-        }
+    from app.ui.dialog_style import apply_dark_popup_style
 
-        QMenu::item {
-            color: #B8B8B8;
-            background-color: transparent;
-            padding: 6px 28px 6px 12px;
-            margin: 1px 2px;
-            border-radius: 5px;
-        }
-
-        QMenu::item:selected {
-            color: #E0E0E0;
-            background-color: #2A2A2A;
-        }
-
-        QMenu::item:disabled {
-            color: #606060;
-            background-color: transparent;
-        }
-
-        QMenu::separator {
-            height: 1px;
-            background-color: #303030;
-            margin: 5px 8px;
-        }
-
-        QMenu::indicator {
-            width: 14px;
-            height: 14px;
-        }
-    """)
+    apply_dark_popup_style(menu)
 
 
 def floating_window_qss():
@@ -335,46 +300,46 @@ QToolButton#NoteCommandButton:pressed {{
 def preview_dialog_qss():
     return f"""
 QDialog {{
-    background-color: {THEME["surface_soft"]};
-    color: {THEME["text_primary"]};
+    background-color: #0d0d0d;
+    color: #ffffff;
     font-family: "Microsoft YaHei UI";
     font-size: 13px;
 }}
 QFrame#PreviewToolbar {{
-    background-color: rgba(255, 255, 255, 165);
-    border: 1px solid {THEME["border_light"]};
+    background-color: #161616;
+    border: 1px solid #555555;
     border-radius: 10px;
     padding: 8px;
 }}
 QPushButton, QSpinBox {{
     min-height: 34px;
-    border: 1px solid {THEME["border"]};
+    border: 1px solid #666666;
     border-radius: {RADIUS_BUTTON}px;
-    background-color: rgba(255, 255, 255, 210);
-    color: #334155;
+    background-color: #2b2b2b;
+    color: #ffffff;
     padding: 2px 10px;
 }}
 QPushButton:hover {{
-    background-color: #F1F5F9;
-    border-color: {THEME["border_hover"]};
+    background-color: #3a3a3a;
+    border-color: #999999;
 }}
 QPushButton:checked {{
-    color: #315F98;
-    background-color: {THEME["accent_light"]};
-    border-color: #7FA3CE;
+    color: #ffffff;
+    background-color: #555555;
+    border-color: #d0d0d0;
     font-weight: 600;
 }}
 QSlider::groove:horizontal {{
     height: 6px;
     border-radius: 3px;
-    background: {THEME["border_light"]};
+    background: #444444;
 }}
 QSlider::handle:horizontal {{
     width: 16px;
     height: 16px;
     margin: -5px 0;
     border-radius: 8px;
-    background: {THEME["accent"]};
+    background: #bdbdbd;
 }}
 {SCROLLBAR_QSS}
 """

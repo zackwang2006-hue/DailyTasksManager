@@ -2,6 +2,7 @@ from datetime import date, datetime, time, timedelta
 
 from app.database.db_manager import DBManager
 from app.models.plan import PlanLevel
+from app.models.priority import normalize_priority_state
 from app.models.task import Task
 from app.services.checkin_service import CheckinService
 from app.services.history_service import HistoryService
@@ -16,6 +17,10 @@ DAILY_TASK_PARENT_LEVELS = (
     PlanLevel.YEAR,
     PlanLevel.FIVE_YEAR,
 )
+
+MINIMAL_ACTION_MAX_LENGTH = 12
+DEFAULT_MINIMAL_ACTION = "开始行动"
+MIN_COMPLETION_NOTE_CHARS = 5
 
 
 class TaskService:
@@ -32,6 +37,7 @@ class TaskService:
         ddl=None,
         task_type="normal",
         scheduled_at=None,
+        fixed_time=None,
         plan_level=None,
         period_key=None,
         period_start=None,
@@ -40,6 +46,10 @@ class TaskService:
         parent_plan_task_id=None,
         source_daily_task_id=None,
         generated_date=None,
+        is_important=False,
+        is_urgent=False,
+        is_fixed_event=False,
+        minimal_action=None,
         now=None,
     ):
         now_value = now or datetime.now()
@@ -49,29 +59,80 @@ class TaskService:
             now_value = datetime.fromisoformat(str(now_value))
         created_at = now_value.isoformat(timespec="seconds")
 
+        normalized_plan_level = self.normalize_plan_level(plan_level)
+        is_day_plan = normalized_plan_level == PlanLevel.DAY.value
+        is_daily_task = category == "daily" or task_type == "daily"
+        requires_minimal_action = is_day_plan or is_daily_task
+        minimal_action = self.normalize_minimal_action(
+            minimal_action,
+            title=title,
+            required=requires_minimal_action and minimal_action is not None,
+        )
+        fixed_time = fixed_time or self.time_part(scheduled_at)
+
         if plan_level:
             category = "plan"
             task_type = "normal"
-            scheduled_at = None
             ddl = None
+            if not is_day_plan:
+                scheduled_at = None
+                fixed_time = None
+                is_important = False
+                is_urgent = False
+                is_fixed_event = False
         elif category == "timed" or task_type == "timed":
             category = "timed"
             task_type = "timed"
             ddl = None
+            is_important = False
+            is_urgent = False
+            is_fixed_event = False
+            fixed_time = self.time_part(scheduled_at)
         else:
             task_type = "daily" if category == "daily" else "normal"
-            scheduled_at = None
+            if task_type != "daily":
+                scheduled_at = None
+                fixed_time = None
+                is_important = False
+                is_urgent = False
+                is_fixed_event = False
             if task_type == "daily" and not ddl:
                 ddl = get_daily_default_deadline(now_value).strftime("%Y-%m-%d %H:%M:%S")
+
+        if not is_day_plan and not is_daily_task:
+            scheduled_at = None
+            fixed_time = None
+            is_important = False
+            is_urgent = False
+            is_fixed_event = False
+        priority_state = normalize_priority_state(
+            fixed_time,
+            is_urgent=is_urgent,
+            is_important=is_important,
+            is_fixed_event=is_fixed_event,
+        )
+        fixed_time = priority_state["fixed_time"]
+        is_important = priority_state["is_important"]
+        is_urgent = priority_state["is_urgent"]
+        is_fixed_event = priority_state["is_fixed_event"]
+        priority_level = priority_state["priority_level"]
+        if is_fixed_event and is_day_plan:
+            scheduled_at = self.compose_scheduled_at(period_start, fixed_time)
+        elif is_daily_task and category == "daily":
+            scheduled_at = None
+        elif not is_fixed_event and not (category == "timed" or task_type == "timed"):
+            scheduled_at = None
 
         sql = """
         INSERT INTO tasks (
             title, description, category, ddl, task_type, scheduled_at,
             is_completed, is_deleted, created_at, completed_at,
             plan_level, period_key, period_start, period_end, archived,
-            parent_plan_task_id, source_daily_task_id, generated_date
+            parent_plan_task_id, source_daily_task_id, generated_date,
+            is_important, is_urgent, is_fixed_event, priority_level, fixed_time,
+            minimal_action
         )
-        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         return self.db.execute(
@@ -84,7 +145,7 @@ class TaskService:
                 task_type,
                 scheduled_at,
                 created_at,
-                self.normalize_plan_level(plan_level),
+                normalized_plan_level,
                 period_key,
                 period_start,
                 period_end,
@@ -92,10 +153,28 @@ class TaskService:
                 parent_plan_task_id,
                 source_daily_task_id,
                 generated_date,
+                1 if is_important else 0,
+                1 if is_urgent else 0,
+                1 if is_fixed_event else 0,
+                priority_level,
+                fixed_time,
+                minimal_action,
             ),
         )
 
-    def add_plan_task(self, title, description="", plan_level=PlanLevel.DAY, now=None):
+    def add_plan_task(
+        self,
+        title,
+        description="",
+        plan_level=PlanLevel.DAY,
+        scheduled_at=None,
+        fixed_time=None,
+        is_important=False,
+        is_urgent=False,
+        is_fixed_event=False,
+        minimal_action=None,
+        now=None,
+    ):
         period = period_service.current_period(plan_level, now)
         return self.add_task(
             title=title,
@@ -103,12 +182,17 @@ class TaskService:
             category="plan",
             ddl=None,
             task_type="normal",
-            scheduled_at=None,
+            scheduled_at=scheduled_at,
+            fixed_time=fixed_time,
             plan_level=period.level,
             period_key=period.key,
             period_start=period.start.isoformat(),
             period_end=period.end.isoformat(),
             archived=False,
+            is_important=is_important,
+            is_urgent=is_urgent,
+            is_fixed_event=is_fixed_event,
+            minimal_action=minimal_action,
             now=now,
         )
 
@@ -157,6 +241,12 @@ class TaskService:
         generated_date,
         title,
         description="",
+        scheduled_at=None,
+        fixed_time=None,
+        is_important=False,
+        is_urgent=False,
+        is_fixed_event=False,
+        minimal_action=None,
     ):
         generated_date = period_service.normalize_date(generated_date)
         existing = self.get_generated_daily_plan_task(source_daily_task_id, generated_date)
@@ -170,7 +260,8 @@ class TaskService:
             category="plan",
             ddl=None,
             task_type="normal",
-            scheduled_at=None,
+            scheduled_at=scheduled_at,
+            fixed_time=fixed_time,
             plan_level=PlanLevel.DAY,
             period_key=period.key,
             period_start=period.start.isoformat(),
@@ -179,6 +270,10 @@ class TaskService:
             parent_plan_task_id=parent_plan_task_id,
             source_daily_task_id=source_daily_task_id,
             generated_date=generated_date.isoformat(),
+            is_important=is_important,
+            is_urgent=is_urgent,
+            is_fixed_event=is_fixed_event,
+            minimal_action=minimal_action,
         )
 
     def get_generated_daily_plan_task(self, source_daily_task_id, generated_date):
@@ -194,7 +289,19 @@ class TaskService:
         row = self.db.fetch_one(sql, (source_daily_task_id, generated_date))
         return Task.from_row(row) if row is not None else None
 
-    def add_daily_task_rule(self, title, description, parent_plan_task_id, today=None):
+    def add_daily_task_rule(
+        self,
+        title,
+        description,
+        parent_plan_task_id,
+        scheduled_at=None,
+        fixed_time=None,
+        is_important=False,
+        is_urgent=False,
+        is_fixed_event=False,
+        minimal_action=None,
+        today=None,
+    ):
         target_date = period_service.normalize_date(today)
         parent = self.get_task_by_id(parent_plan_task_id)
         self.validate_daily_task_parent(parent, target_date)
@@ -206,7 +313,8 @@ class TaskService:
             category="daily",
             ddl=None,
             task_type="daily",
-            scheduled_at=None,
+            scheduled_at=scheduled_at,
+            fixed_time=fixed_time,
             plan_level=None,
             period_key=None,
             period_start=target_date.isoformat(),
@@ -215,6 +323,10 @@ class TaskService:
             parent_plan_task_id=parent.task_id,
             source_daily_task_id=None,
             generated_date=None,
+            is_important=is_important,
+            is_urgent=is_urgent,
+            is_fixed_event=is_fixed_event,
+            minimal_action=minimal_action,
             now=datetime.combine(target_date, time.min),
         )
         self.ensure_daily_plan_tasks_for_date(target_date)
@@ -289,6 +401,12 @@ class TaskService:
                     generated_date=target_date,
                     title=template.title,
                     description=template.description,
+                    scheduled_at=self.compose_scheduled_at(target_date, template.fixed_time),
+                    fixed_time=template.fixed_time,
+                    is_important=template.is_important,
+                    is_urgent=template.is_urgent,
+                    is_fixed_event=template.is_fixed_event,
+                    minimal_action=template.minimal_action,
                 )
             )
 
@@ -398,14 +516,24 @@ class TaskService:
         rows = self.db.fetch_all(sql, (category,))
         return [Task.from_row(row) for row in rows]
 
-    def complete_task(self, task_id):
-        return self.complete_task_with_daily_sync(task_id)
+    def normalize_completion_note(self, completion_note):
+        text = (completion_note or "").strip()
+        effective_length = len("".join(str(text).split()))
+        if effective_length < MIN_COMPLETION_NOTE_CHARS:
+            raise ValueError("完成情况至少填写5个有效字符")
+        return text
 
-    def complete_task_with_daily_sync(self, task_id):
+    def complete_task(self, task_id, completion_note=None):
+        return self.complete_task_with_daily_sync(task_id, completion_note)
+
+    def complete_task_with_daily_sync(self, task_id, completion_note=None):
         task = self.get_task_by_id(task_id)
 
-        if task is None or task.is_completed:
-            return False
+        if task is None:
+            raise ValueError("对应任务不存在")
+        if task.is_completed:
+            raise ValueError("任务已经完成")
+        completion_note = self.normalize_completion_note(completion_note)
 
         completed_time = datetime.now()
         completed_at = completed_time.isoformat(timespec="seconds")
@@ -430,6 +558,7 @@ class TaskService:
                     checkin_date,
                     True,
                     completed_at,
+                    completion_note,
                 )
             elif task.source_daily_task_id and task.generated_date:
                 self.upsert_daily_checkin(
@@ -438,16 +567,19 @@ class TaskService:
                     task.generated_date,
                     True,
                     completed_at,
+                    completion_note,
                 )
 
-        task.completed_at = completed_at
-        self.history_service.add_task_log(task)
+            task.completed_at = completed_at
+            self.history_service.add_task_log(task, completion_note=completion_note, cursor=cursor)
         return True
 
-    def set_daily_checkin_with_plan_sync(self, daily_task_id, target_date=None, completed=True):
+    def set_daily_checkin_with_plan_sync(self, daily_task_id, target_date=None, completed=True, completion_note=None):
         target_date = period_service.normalize_date(target_date)
         completed = bool(completed)
         timestamp = datetime.now().isoformat(timespec="seconds")
+        if completed:
+            completion_note = self.normalize_completion_note(completion_note)
 
         if completed:
             self.ensure_daily_plan_tasks_for_date(target_date)
@@ -467,6 +599,7 @@ class TaskService:
                 target_date.isoformat(),
                 completed,
                 timestamp,
+                completion_note if completed else None,
             )
 
             if generated_task is not None:
@@ -492,20 +625,25 @@ class TaskService:
                         (generated_task.task_id,),
                     )
 
-        if should_log_generated_task:
-            self.history_service.add_task_log(generated_task)
+                if should_log_generated_task:
+                    self.history_service.add_task_log(
+                        generated_task,
+                        completion_note=completion_note,
+                        cursor=cursor,
+                    )
         return True
 
-    def upsert_daily_checkin(self, cursor, task_id, checkin_date, completed, completed_at):
+    def upsert_daily_checkin(self, cursor, task_id, checkin_date, completed, completed_at, completion_note=None):
         cursor.execute(
             """
-            INSERT INTO daily_checkins (task_id, checkin_date, is_completed, completed_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO daily_checkins (task_id, checkin_date, is_completed, completed_at, completion_note)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(task_id, checkin_date) DO UPDATE SET
                 is_completed = excluded.is_completed,
-                completed_at = excluded.completed_at
+                completed_at = excluded.completed_at,
+                completion_note = excluded.completion_note
             """,
-            (task_id, checkin_date, 1 if completed else 0, completed_at),
+            (task_id, checkin_date, 1 if completed else 0, completed_at, completion_note),
         )
 
     def get_daily_tasks(self):
@@ -618,6 +756,41 @@ class TaskService:
             except ValueError:
                 return None
 
+    def normalize_minimal_action(self, minimal_action, title="", required=False):
+        if minimal_action is None:
+            text = ""
+        else:
+            text = str(minimal_action).strip()
+
+        if not text:
+            if required:
+                raise ValueError("请填写最小动作")
+            text = (title or "").strip()[:MINIMAL_ACTION_MAX_LENGTH] or DEFAULT_MINIMAL_ACTION
+
+        if len(text) > MINIMAL_ACTION_MAX_LENGTH:
+            raise ValueError("最小动作不能超过12个字符")
+        return text
+
+    def time_part(self, value):
+        if not value:
+            return None
+        text = str(value).strip()
+        if len(text) >= 19 and text[10] in {" ", "T"}:
+            text = text[11:19]
+        elif len(text) >= 8:
+            text = text[:8]
+        try:
+            return time.fromisoformat(text).strftime("%H:%M:%S")
+        except ValueError:
+            return None
+
+    def compose_scheduled_at(self, target_date, fixed_time):
+        fixed_time = self.time_part(fixed_time)
+        if not fixed_time:
+            return None
+        target_date = period_service.normalize_date(target_date)
+        return f"{target_date.isoformat()}T{fixed_time}"
+
     def parse_date(self, value):
         if not value:
             return None
@@ -690,16 +863,65 @@ class TaskService:
         ddl,
         task_type="normal",
         scheduled_at=None,
+        fixed_time=None,
+        is_important=False,
+        is_urgent=False,
+        is_fixed_event=False,
+        minimal_action=None,
     ):
+        task = self.get_task_by_id(task_id)
+        normalized_plan_level = self.normalize_plan_level(getattr(task, "plan_level", None))
+        is_day_plan = normalized_plan_level == PlanLevel.DAY.value
+        is_daily_task = category == "daily" or task_type == "daily"
+        minimal_action = self.normalize_minimal_action(
+            minimal_action if minimal_action is not None else getattr(task, "minimal_action", None),
+            title=title,
+            required=(is_day_plan or is_daily_task) and minimal_action is not None,
+        )
+        fixed_time = fixed_time or self.time_part(scheduled_at)
+
         if category == "timed" or task_type == "timed":
             category = "timed"
             task_type = "timed"
             ddl = None
+            is_important = False
+            is_urgent = False
+            is_fixed_event = False
+            fixed_time = self.time_part(scheduled_at)
         else:
             task_type = "daily" if category == "daily" else "normal"
-            scheduled_at = None
+            if not is_day_plan and task_type != "daily":
+                scheduled_at = None
+                fixed_time = None
+                is_important = False
+                is_urgent = False
+                is_fixed_event = False
             if task_type == "daily" and not ddl:
                 ddl = get_daily_default_deadline().strftime("%Y-%m-%d %H:%M:%S")
+
+        if not is_day_plan and not is_daily_task:
+            scheduled_at = None
+            fixed_time = None
+            is_important = False
+            is_urgent = False
+            is_fixed_event = False
+        priority_state = normalize_priority_state(
+            fixed_time,
+            is_urgent=is_urgent,
+            is_important=is_important,
+            is_fixed_event=is_fixed_event,
+        )
+        fixed_time = priority_state["fixed_time"]
+        is_important = priority_state["is_important"]
+        is_urgent = priority_state["is_urgent"]
+        is_fixed_event = priority_state["is_fixed_event"]
+        priority_level = priority_state["priority_level"]
+        if is_fixed_event and is_day_plan:
+            scheduled_at = self.compose_scheduled_at(task.period_start, fixed_time)
+        elif is_daily_task and category == "daily":
+            scheduled_at = None
+        elif not is_fixed_event and not (category == "timed" or task_type == "timed"):
+            scheduled_at = None
 
         sql = """
         UPDATE tasks
@@ -708,13 +930,33 @@ class TaskService:
             category = ?,
             ddl = ?,
             task_type = ?,
-            scheduled_at = ?
+            scheduled_at = ?,
+            is_important = ?,
+            is_urgent = ?,
+            is_fixed_event = ?,
+            priority_level = ?,
+            fixed_time = ?,
+            minimal_action = ?
         WHERE id = ?
         """
 
         self.db.execute(
             sql,
-            (title, description, category, ddl, task_type, scheduled_at, task_id)
+            (
+                title,
+                description,
+                category,
+                ddl,
+                task_type,
+                scheduled_at,
+                1 if is_important else 0,
+                1 if is_urgent else 0,
+                1 if is_fixed_event else 0,
+                priority_level,
+                fixed_time,
+                minimal_action,
+                task_id,
+            )
         )
 
     def normalize_plan_level(self, plan_level):

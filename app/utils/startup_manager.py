@@ -11,7 +11,7 @@ try:
 except ImportError:  # pragma: no cover - Windows-only feature.
     winreg = None
 
-from app.config import APP_NAME
+from app.config import APP_NAME, BASE_DIR, LOGS_DIR, RESOURCE_BASE_DIR
 
 
 TASK_NAME = "ScheduleAppAutoStart"
@@ -24,15 +24,11 @@ _last_error_type = ""
 
 def get_project_root() -> Path:
     """获取项目根目录。"""
-    return Path(__file__).resolve().parents[2]
+    return RESOURCE_BASE_DIR if getattr(sys, "frozen", False) else BASE_DIR
 
 
 def get_startup_manager_log_path() -> Path:
-    if getattr(sys, "frozen", False):
-        app_root = Path(sys.executable).resolve().parent
-    else:
-        app_root = get_project_root()
-    return app_root / "logs" / "startup_manager.log"
+    return LOGS_DIR / "startup_manager.log"
 
 
 def write_startup_manager_log(message: str) -> None:
@@ -236,7 +232,7 @@ def disable_startup_without_elevation() -> bool:
 
 def get_elevated_helper_path() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "startup_elevated_helper.py"
+        return Path(sys.executable).resolve()
     return get_project_root() / "startup_elevated_helper.py"
 
 
@@ -256,8 +252,12 @@ def request_elevated_startup_change(action: str) -> bool:
         return False
 
     program = str(Path(sys.executable).resolve())
-    params = f'"{helper_path}" {action}'
-    working_dir = str(helper_path.parent)
+    if getattr(sys, "frozen", False):
+        params = f'--startup-elevated-helper {action}'
+        working_dir = str(Path(sys.executable).resolve().parent)
+    else:
+        params = f'"{helper_path}" {action}'
+        working_dir = str(helper_path.parent)
 
     write_startup_manager_log(
         "request_elevated_startup_change "

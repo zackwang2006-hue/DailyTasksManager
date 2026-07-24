@@ -20,6 +20,8 @@ data/*.sqlite
 data/*.sqlite3
 data/backups/
 data/quick_note/
+config/report_delivery.json
+reports/
 
 # 打包输出
 build/

@@ -105,7 +105,14 @@ class FloatingDayPlanTests(unittest.TestCase):
 
         emissions = []
         window.data_changed.connect(lambda: emissions.append(True))
-        window.complete_task(task_id)
+        with patch(
+            "app.ui.floating_task_window.prompt_and_complete_task",
+            side_effect=lambda parent, task_service, selected_id: task_service.complete_task(
+                selected_id,
+                "完成情况记录",
+            ),
+        ):
+            window.complete_task(task_id)
 
         self.assertEqual(len(emissions), 1)
         self.assertTrue(service.get_task_by_id(task_id).is_completed)

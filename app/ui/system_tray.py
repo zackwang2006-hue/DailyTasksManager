@@ -1,14 +1,15 @@
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QStyle, QSystemTrayIcon
 
-from app.config import APP_ICON_PATH
+from app.config import APP_ICON_PATH, APP_NAME
+from app.ui.dialog_style import apply_dark_popup_style
 
 
 class SystemTrayManager:
     def __init__(self, parent):
         self.parent = parent
         self.tray_icon = QSystemTrayIcon(self.get_icon(), parent)
-        self.tray_icon.setToolTip("ScheduleApp")
+        self.tray_icon.setToolTip(APP_NAME)
         self.tray_icon.setContextMenu(self.create_menu())
         self.tray_icon.activated.connect(self.on_activated)
         self.tray_icon.show()
@@ -25,6 +26,7 @@ class SystemTrayManager:
 
     def create_menu(self):
         menu = QMenu(self.parent)
+        apply_dark_popup_style(menu)
 
         show_main_action = QAction("显示主窗口", menu)
         show_main_action.triggered.connect(self.parent.show_main_window)

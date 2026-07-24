@@ -18,11 +18,14 @@ class TaskCard(QFrame):
     edit_requested = Signal(int)
     clicked = Signal(object)
 
-    def __init__(self, task: Task, parent=None):
+    def __init__(self, task: Task, parent=None, palette=None, read_only=False, show_previous_status=False):
         super().__init__(parent)
 
         self.task = task
         self.is_expanded = False
+        self.palette = palette
+        self.read_only = read_only
+        self.show_previous_status = show_previous_status
 
         self.setFixedWidth(280)
         self.setObjectName("TaskCard")
@@ -34,14 +37,14 @@ class TaskCard(QFrame):
 
         title_layout = QHBoxLayout()
 
-        self.title_label = QLabel(self.task.title)
+        self.title_label = QLabel(self.display_title())
         self.title_label.setObjectName("TaskTitle")
 
 
         title_layout.addWidget(self.title_label)
 
         if self.is_timed_task():
-            self.timed_label = QLabel("定时任务")
+            self.timed_label = QLabel("固定事件")
             self.timed_label.setObjectName("TimedLabel")
             title_layout.addWidget(self.timed_label)
 
@@ -86,6 +89,11 @@ class TaskCard(QFrame):
 
         self.set_expanded(False)
 
+    def display_title(self):
+        if self.show_previous_status and not self.task.is_completed:
+            return f"{self.task.title} (未完成)"
+        return self.task.title
+
     def get_ddl_text(self):
         if self.task.task_type == "daily" or self.task.category == "daily":
             daily_due = self.task.ddl or get_daily_default_deadline()
@@ -106,7 +114,7 @@ class TaskCard(QFrame):
             return f"截止时间：{format_task_time(self.task.ddl)}（充足）"
 
     def is_timed_task(self):
-        return self.task.task_type == "timed" or self.task.category == "timed"
+        return bool(self.task.scheduled_at) or self.task.task_type == "timed" or self.task.category == "timed"
 
     def get_scheduled_text(self):
         if not self.task.scheduled_at:
@@ -121,7 +129,27 @@ class TaskCard(QFrame):
         return "safe" if self.task.ddl else "none"
 
     def apply_style(self):
-        border_color, background_color, text_color = get_task_card_color(self.task)
+        if self.palette is not None:
+            if getattr(self.task, "is_completed", False):
+                border_color = self.palette.completed_border
+                background_color = self.palette.completed_background
+                text_color = self.palette.completed_text
+            else:
+                border_color = self.palette.border
+                background_color = self.palette.background
+                text_color = self.palette.text
+            secondary_text_color = self.palette.secondary_text
+            button_background = self.palette.button_background
+            button_hover = self.palette.button_hover
+            button_pressed = self.palette.button_pressed
+            button_text = self.palette.button_text
+        else:
+            border_color, background_color, text_color = get_task_card_color(self.task)
+            secondary_text_color = text_color
+            button_background = "#eeeeee"
+            button_hover = "#dddddd"
+            button_pressed = "#cccccc"
+            button_text = "#222222"
 
         self.setStyleSheet(f"""
             QFrame#TaskCard {{
@@ -135,17 +163,17 @@ class TaskCard(QFrame):
             QLabel#TaskTitle {{
                 font-size: 16px;
                 font-weight: bold;
-                color: {text_color};
+                color: {"#e53935" if self.show_previous_status and not self.task.is_completed else text_color};
                 background-color: transparent;
             }}
 
             QLabel#TaskDescription {{
-                color: {text_color};
+                color: {secondary_text_color};
                 background-color: transparent;
             }}
 
             QLabel#DDLLabel {{
-                color: {text_color};
+                color: {secondary_text_color};
                 font-weight: bold;
                 background-color: transparent;
             }}
@@ -159,19 +187,26 @@ class TaskCard(QFrame):
             QPushButton {{
                 padding: 5px 10px;
                 border-radius: 6px;
-                background-color: #eeeeee;
-                color: #222222;
+                background-color: {button_background};
+                color: {button_text};
+                border: 1px solid {border_color};
+                font-weight: bold;
             }}
 
             QPushButton:hover {{
-                background-color: #dddddd;
+                background-color: {button_hover};
+            }}
+
+            QPushButton:pressed {{
+                background-color: {button_pressed};
             }}
         """)
 
     def set_expanded(self, expanded):
         self.is_expanded = expanded
         self.description_label.setVisible(expanded)
-        self.button_widget.setVisible(expanded)
+        self.ddl_label.setVisible(expanded and not bool(self.task.plan_level))
+        self.button_widget.setVisible(expanded and not self.read_only)
 
         self.setMaximumHeight(16777215)
         self.layout().invalidate()

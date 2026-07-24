@@ -19,6 +19,8 @@ from PySide6.QtGui import QColor, QPen
 
 from app.config import TASK_CATEGORIES
 from app.models.plan import PlanLevel
+from app.ui.priority_controls import connect_priority_controls, sync_priority_controls
+from app.ui.dialog_style import apply_dialog_style
 from app.utils.time_utils import get_daily_default_deadline
 
 
@@ -75,11 +77,13 @@ class TaskDialog(QDialog):
         self._applying_deadline_default = False
         self._deadline_manually_changed = False
         self.setWindowTitle("编辑任务" if task else "新增任务")
-        self.resize(420, 390)
 
         self.init_ui()
+        apply_dialog_style(self)
         self.load_task_data()
         self.update_ddl_rule()
+        self.setMinimumWidth(420)
+        self.adjustSize()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -89,6 +93,12 @@ class TaskDialog(QDialog):
 
         # 在标题输入框里按回车，直接确认新增任务
         self.title_input.returnPressed.connect(self.accept_dialog)
+
+        self.minimal_action_label = QLabel("最小动作")
+        self.minimal_action_input = QLineEdit()
+        self.minimal_action_input.setPlaceholderText("例如：打开文档开始写")
+        self.minimal_action_input.setMaxLength(12)
+        self.minimal_action_input.returnPressed.connect(self.accept_dialog)
 
         self.description_input = QTextEdit()
         self.description_input.setPlaceholderText("请输入任务描述，可不填")
@@ -102,18 +112,22 @@ class TaskDialog(QDialog):
 
         self.category_combo.currentIndexChanged.connect(self.on_category_changed)
 
-        self.is_timed_checkbox = QCheckBox("这是定时任务")
+        self.is_timed_checkbox = QCheckBox("这是固定事件")
         self.is_timed_checkbox.hide()
         self.is_timed_checkbox.stateChanged.connect(self.update_ddl_rule)
 
-        self.scheduled_date_label = QLabel("定时日期")
+        self.important_checkbox = QCheckBox("重要")
+        self.urgent_checkbox = QCheckBox("紧急")
+        self.fixed_event_checkbox = QCheckBox("固定事件")
+
+        self.scheduled_date_label = QLabel("固定日期")
         self.scheduled_date_input = QDateEdit()
         self.scheduled_date_input.setCalendarPopup(True)
         self.scheduled_date_input.setCalendarWidget(CurrentMonthCalendar(self.scheduled_date_input))
         self.scheduled_date_input.setDate(QDate.currentDate().addDays(1))
         self.scheduled_date_input.setDisplayFormat("yyyy-MM-dd")
 
-        self.scheduled_time_label = QLabel("定时时间")
+        self.scheduled_time_label = QLabel("固定时间")
         self.scheduled_time_input = QTimeEdit()
         self.scheduled_time_input.setTime(QTime(23, 59))
         self.scheduled_time_input.setDisplayFormat("HH:mm")
@@ -137,6 +151,12 @@ class TaskDialog(QDialog):
         self.apply_calendar_style()
 
         self.use_ddl_checkbox.stateChanged.connect(self.toggle_ddl_input)
+        self._priority_sync_callback = connect_priority_controls(
+            self.important_checkbox,
+            self.urgent_checkbox,
+            self.fixed_event_checkbox,
+            (self.scheduled_time_input,),
+        )
 
         self.ddl_rule_label = QLabel()
         self.ddl_rule_label.setStyleSheet("color: gray;")
@@ -163,12 +183,21 @@ class TaskDialog(QDialog):
 
         layout.addWidget(self.title_label)
         layout.addWidget(self.title_input)
+        layout.addWidget(self.minimal_action_label)
+        layout.addWidget(self.minimal_action_input)
 
         layout.addWidget(self.description_label)
         layout.addWidget(self.description_input)
 
         layout.addWidget(self.category_label)
         layout.addWidget(self.category_combo)
+
+        priority_layout = QHBoxLayout()
+        priority_layout.addWidget(self.important_checkbox)
+        priority_layout.addWidget(self.urgent_checkbox)
+        priority_layout.addStretch()
+        layout.addLayout(priority_layout)
+        layout.addWidget(self.fixed_event_checkbox)
 
         layout.addWidget(self.is_timed_checkbox)
         layout.addWidget(self.scheduled_date_label)
@@ -182,40 +211,6 @@ class TaskDialog(QDialog):
         layout.addWidget(self.ddl_rule_label)
 
         layout.addLayout(button_layout)
-
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #ffffff;
-                color: #222222;
-            }
-
-            QLabel, QCheckBox {
-                background-color: transparent;
-                color: #222222;
-            }
-
-            QLineEdit, QTextEdit, QComboBox, QDateEdit, QDateTimeEdit, QTimeEdit {
-                padding: 6px;
-                border: 1px solid #cccccc;
-                border-radius: 6px;
-                background-color: #ffffff;
-                color: #222222;
-                selection-background-color: #dbeafe;
-                selection-color: #111111;
-            }
-
-            QPushButton {
-                padding: 8px 14px;
-                border-radius: 8px;
-                background-color: #2d8cff;
-                color: white;
-                font-weight: bold;
-            }
-
-            QPushButton:hover {
-                background-color: #1f6fd1;
-            }
-        """)
 
     def apply_calendar_style(self):
         calendar_style = """
@@ -277,7 +272,7 @@ class TaskDialog(QDialog):
             self.ddl_input,
             self.ddl_datetime_input,
         ):
-            date_input.calendarWidget().setStyleSheet(calendar_style)
+            date_input.calendarWidget().setStyleSheet("")
 
     def keyPressEvent(self, event):
         """
@@ -330,14 +325,37 @@ class TaskDialog(QDialog):
         self.update_ddl_rule()
 
     def update_ddl_rule(self):
+        priority_enabled = self.priority_controls_enabled()
+        minimal_action_enabled = self.minimal_action_enabled()
+        self.minimal_action_label.setVisible(minimal_action_enabled)
+        self.minimal_action_input.setVisible(minimal_action_enabled)
+        for widget in (
+            self.important_checkbox,
+            self.urgent_checkbox,
+            self.fixed_event_checkbox,
+        ):
+            widget.setVisible(priority_enabled)
+        if not priority_enabled:
+            self.important_checkbox.setChecked(False)
+            self.urgent_checkbox.setChecked(False)
+            self.fixed_event_checkbox.setChecked(False)
+        sync_priority_controls(
+            self.important_checkbox,
+            self.urgent_checkbox,
+            self.fixed_event_checkbox,
+            (self.scheduled_time_input,),
+        )
+
         if self.is_plan_mode():
             self.category_label.setVisible(False)
             self.category_combo.setVisible(False)
             self.is_timed_checkbox.setVisible(False)
+            self.scheduled_date_label.setText("固定日期")
+            self.scheduled_time_label.setText("固定时间")
             self.scheduled_date_label.setVisible(False)
             self.scheduled_date_input.setVisible(False)
-            self.scheduled_time_label.setVisible(False)
-            self.scheduled_time_input.setVisible(False)
+            self.scheduled_time_label.setVisible(priority_enabled)
+            self.scheduled_time_input.setVisible(priority_enabled)
             self.use_ddl_checkbox.setVisible(False)
             self.ddl_input.setVisible(False)
             self.ddl_datetime_input.setVisible(False)
@@ -347,21 +365,25 @@ class TaskDialog(QDialog):
         category = self.category_combo.currentData()
         is_timed = category == "timed"
 
+        self.scheduled_date_label.setText("固定日期")
+        self.scheduled_time_label.setText("固定时间")
         self.scheduled_date_label.setVisible(is_timed)
         self.scheduled_date_input.setVisible(is_timed)
-        self.scheduled_time_label.setVisible(is_timed)
-        self.scheduled_time_input.setVisible(is_timed)
+        self.scheduled_time_label.setVisible(is_timed or priority_enabled)
+        self.scheduled_time_input.setVisible(is_timed or priority_enabled)
         self.use_ddl_checkbox.setVisible(False)
         self.ddl_input.setVisible(False)
         self.ddl_datetime_input.setVisible(False)
         self.ddl_rule_label.setText("")
 
         if is_timed:
+            self.scheduled_date_input.setEnabled(True)
+            self.scheduled_time_input.setEnabled(True)
             self.use_ddl_checkbox.setChecked(False)
             self.use_ddl_checkbox.setEnabled(False)
             self.ddl_input.setEnabled(False)
             self.ddl_datetime_input.setEnabled(False)
-            self.ddl_rule_label.setText("定时任务使用具体日期和时间")
+            self.ddl_rule_label.setText("固定事件使用具体日期和时间")
             return
 
         if category is None:
@@ -433,6 +455,14 @@ class TaskDialog(QDialog):
         self.ddl_input.setVisible(self.use_ddl_checkbox.isChecked())
         self.ddl_input.setEnabled(self.use_ddl_checkbox.isChecked())
 
+    def priority_controls_enabled(self):
+        if self.is_plan_mode():
+            return self.plan_level == PlanLevel.DAY
+        return self.category_combo.currentData() == "daily"
+
+    def minimal_action_enabled(self):
+        return self.is_plan_mode() and self.plan_level == PlanLevel.DAY
+
     def accept_dialog(self):
         title = self.title_input.text().strip()
 
@@ -443,6 +473,18 @@ class TaskDialog(QDialog):
         if not self.is_plan_mode() and self.category_combo.currentData() is None:
             QMessageBox.warning(self, "提示", "请选择任务类型")
             return
+        if self.minimal_action_input.isVisible():
+            minimal_action = self.minimal_action_input.text().strip()
+            if not minimal_action:
+                QMessageBox.warning(self, "提示", "请填写最小动作")
+                return
+            if len(minimal_action) > 12:
+                QMessageBox.warning(self, "提示", "最小动作不能超过12个字符")
+                return
+        if self.fixed_event_checkbox.isVisible() and self.fixed_event_checkbox.isChecked():
+            if self.important_checkbox.isChecked() or self.urgent_checkbox.isChecked():
+                QMessageBox.warning(self, "提示", "固定事件不能同时紧急或重要")
+                return
 
         self.accept()
 
@@ -450,14 +492,23 @@ class TaskDialog(QDialog):
         title = self.title_input.text().strip()
         description = self.description_input.toPlainText().strip()
         if self.is_plan_mode():
+            scheduled_at = None
+            fixed_time = None
+            if self.priority_controls_enabled() and self.fixed_event_checkbox.isChecked():
+                fixed_time = self.scheduled_time_input.time().toString("HH:mm:ss")
             return {
                 "title": title,
                 "description": description,
+                "minimal_action": self.minimal_action_input.text().strip(),
                 "category": "plan",
                 "ddl": None,
                 "task_type": "normal",
-                "scheduled_at": None,
+                "scheduled_at": scheduled_at,
+                "fixed_time": fixed_time,
                 "plan_level": self.plan_level.value if self.plan_level else None,
+                "is_important": self.important_checkbox.isChecked(),
+                "is_urgent": self.urgent_checkbox.isChecked(),
+                "is_fixed_event": self.fixed_event_checkbox.isChecked(),
             }
 
         category = self.category_combo.currentData()
@@ -474,6 +525,9 @@ class TaskDialog(QDialog):
                 "ddl": None,
                 "task_type": "timed",
                 "scheduled_at": f"{scheduled_date} {scheduled_time}",
+                "is_important": False,
+                "is_urgent": False,
+                "is_fixed_event": True,
             }
 
         if category == "short":
@@ -499,6 +553,14 @@ class TaskDialog(QDialog):
             "ddl": ddl,
             "task_type": "daily" if category == "daily" else "normal",
             "scheduled_at": None,
+            "fixed_time": (
+                self.scheduled_time_input.time().toString("HH:mm:ss")
+                if category == "daily" and self.fixed_event_checkbox.isChecked()
+                else None
+            ),
+            "is_important": self.important_checkbox.isChecked() if category == "daily" else False,
+            "is_urgent": self.urgent_checkbox.isChecked() if category == "daily" else False,
+            "is_fixed_event": self.fixed_event_checkbox.isChecked() if category == "daily" else False,
         }
 
     def load_task_data(self):
@@ -507,14 +569,24 @@ class TaskDialog(QDialog):
 
         self.title_input.setText(self.task.title)
         self.description_input.setPlainText(self.task.description)
+        self.minimal_action_input.setText(getattr(self.task, "minimal_action", "") or "")
 
         if self.is_plan_mode():
+            self.important_checkbox.setChecked(self.task.is_important)
+            self.urgent_checkbox.setChecked(self.task.is_urgent)
+            self.fixed_event_checkbox.setChecked(bool(self.task.fixed_time or self.task.scheduled_at))
+            self.load_fixed_time(self.task.fixed_time or self.task.scheduled_at)
+            self.update_ddl_rule()
             return
 
         category = "timed" if self.task.task_type == "timed" else self.task.category
         index = self.category_combo.findData(category)
         if index >= 0:
             self.category_combo.setCurrentIndex(index)
+        if category == "daily":
+            self.important_checkbox.setChecked(self.task.is_important)
+            self.urgent_checkbox.setChecked(self.task.is_urgent)
+            self.fixed_event_checkbox.setChecked(bool(self.task.fixed_time or self.task.scheduled_at))
 
         if self.task.ddl:
             ddl_datetime = QDateTime.fromString(self.task.ddl, "yyyy-MM-dd HH:mm:ss")
@@ -533,16 +605,35 @@ class TaskDialog(QDialog):
         elif category == "daily":
             self.set_daily_default_deadline()
 
-        if self.task.scheduled_at:
-            try:
-                scheduled_date = QDate.fromString(self.task.scheduled_at[:10], "yyyy-MM-dd")
-                scheduled_time = QTime.fromString(self.task.scheduled_at[11:16], "HH:mm")
-                if scheduled_date.isValid():
-                    self.scheduled_date_input.setDate(scheduled_date)
-                if scheduled_time.isValid():
-                    self.scheduled_time_input.setTime(scheduled_time)
-            except TypeError:
-                pass
+        if self.task.fixed_time or self.task.scheduled_at:
+            self.load_scheduled_datetime(self.task.scheduled_at)
+            self.load_fixed_time(self.task.fixed_time or self.task.scheduled_at)
+            if category == "daily":
+                self.fixed_event_checkbox.setChecked(True)
+                self.update_ddl_rule()
+
+    def load_scheduled_datetime(self, value):
+        try:
+            scheduled_date = QDate.fromString(value[:10], "yyyy-MM-dd")
+            scheduled_time = QTime.fromString(value[11:16], "HH:mm")
+            if scheduled_date.isValid():
+                self.scheduled_date_input.setDate(scheduled_date)
+            if scheduled_time.isValid():
+                self.scheduled_time_input.setTime(scheduled_time)
+        except TypeError:
+            pass
+
+    def load_fixed_time(self, value):
+        if not value:
+            return
+        text = str(value)
+        if len(text) >= 19 and text[10] in {" ", "T"}:
+            text = text[11:16]
+        else:
+            text = text[:5]
+        fixed_time = QTime.fromString(text, "HH:mm")
+        if fixed_time.isValid():
+            self.scheduled_time_input.setTime(fixed_time)
     def is_plan_mode(self):
         return self.mode == "plan"
 

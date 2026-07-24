@@ -29,11 +29,14 @@ from PySide6.QtWidgets import (
 
 from app.config import APP_NAME
 from app.models.plan import PlanLevel
+from app.models.priority import PRIORITY_TEXT_COLOR, normalize_priority, priority_card_color
 from app.services.period_service import period_service
-from app.services.task_service import TaskService
+from app.services.task_service import DEFAULT_MINIMAL_ACTION, TaskService
+from app.ui.completion_flow import prompt_and_complete_task
+from app.ui.dialog_style import apply_dark_popup_style
 from app.ui.quick_note import QuickNoteView
-from app.ui.task_colors import get_task_card_color
 from app.ui.theme import RADIUS_WINDOW, THEME, floating_window_qss
+from app.utils.time_utils import format_task_time
 
 
 PAGE_TASKS = "tasks"
@@ -150,13 +153,18 @@ class FloatingTaskItem(QFrame):
         checkbox.setFixedWidth(18)
         checkbox.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
-        self.summary_label = QLabel(f"{self.task.title}（{self.time_text}）")
+        self.summary_label = QLabel(self.summary_text())
         self.summary_label.setObjectName("TaskSummary")
         self.summary_label.setWordWrap(True)
         self.summary_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.priority_label = QLabel(f"P{normalize_priority(self.task.priority_level)}")
+        self.priority_label.setObjectName("PriorityBadge")
+        self.priority_label.setFixedWidth(28)
+        self.priority_label.setAlignment(Qt.AlignCenter)
 
         row_layout.addWidget(checkbox)
         row_layout.addWidget(self.summary_label, 1)
+        row_layout.addWidget(self.priority_label, 0, Qt.AlignTop)
 
         if self.allow_pin:
             self.pin_button = QPushButton("♥" if self.is_pinned else "♡")
@@ -183,13 +191,10 @@ class FloatingTaskItem(QFrame):
         detail_title.setWordWrap(True)
         detail_layout.addWidget(detail_title)
 
-        if self.task.description:
-            detail_description = QLabel(f"描述：{self.task.description}")
-            detail_description.setWordWrap(True)
-            detail_layout.addWidget(detail_description)
-
-        detail_layout.addWidget(QLabel(f"分类：{self.category_text}"))
-        detail_layout.addWidget(QLabel(self.time_text))
+        description = (self.task.description or "").strip() or "我懒得描述"
+        detail_description = QLabel(f"描述：{description}")
+        detail_description.setWordWrap(True)
+        detail_layout.addWidget(detail_description)
 
         complete_button = QPushButton("完成任务")
         complete_button.setObjectName("CompleteButton")
@@ -201,9 +206,22 @@ class FloatingTaskItem(QFrame):
 
         self.set_expanded(False)
 
+    def summary_text(self):
+        minimal_action = (getattr(self.task, "minimal_action", "") or "").strip()
+        if not minimal_action:
+            minimal_action = (self.task.title or "").strip()[:12] or DEFAULT_MINIMAL_ACTION
+        if self.time_text:
+            return f"{minimal_action}（{self.time_text}）"
+        return minimal_action
+
     def apply_style(self):
-        border_color, background_color, text_color = get_task_card_color(self.task)
-        pin_background = background_color if self.is_pinned else "#ffffff"
+        priority = normalize_priority(self.task.priority_level)
+        base_color = QColor(priority_card_color(priority))
+        background_color = self.rgba(base_color, 188 if self.task.is_completed else 232)
+        border_color = self.rgba(base_color.darker(126), 238)
+        hover_color = self.rgba(base_color.lighter(106), 238)
+        text_color = PRIORITY_TEXT_COLOR
+        pin_background = self.rgba(base_color.lighter(112), 230) if self.is_pinned else "#ffffff"
         pin_text_color = text_color if self.is_pinned else "#666666"
         self.setStyleSheet(f"""
             QFrame#FloatingTaskItem {{
@@ -214,10 +232,20 @@ class FloatingTaskItem(QFrame):
 
             QLabel#TaskSummary,
             QLabel#TaskCheck,
+            QLabel#PriorityBadge,
             QFrame#TaskDetail,
             QFrame#TaskDetail QLabel {{
                 color: {text_color};
                 background-color: transparent;
+            }}
+
+            QLabel#PriorityBadge {{
+                min-height: 20px;
+                border-radius: 8px;
+                border: 1px solid {border_color};
+                background-color: rgba(255, 255, 255, 92);
+                font-size: 11px;
+                font-weight: 700;
             }}
 
             QLabel#DetailTitle {{
@@ -237,7 +265,7 @@ class FloatingTaskItem(QFrame):
 
             QPushButton#PinTaskButton:hover {{
                 border: 1px solid #94A3B8;
-                background-color: #F1F5F9;
+                background-color: {hover_color};
             }}
 
             QPushButton#CompleteButton {{
@@ -256,10 +284,14 @@ class FloatingTaskItem(QFrame):
             }}
         """)
 
+    def rgba(self, color, alpha):
+        return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
+
     def contextMenuEvent(self, event):
         if not self.allow_pin:
             return
         menu = QMenu(self)
+        apply_dark_popup_style(menu)
         menu.addAction("取消置顶" if self.is_pinned else "置顶", lambda: self.pin_requested.emit(self.task.task_id))
         menu.exec(event.globalPos())
 
@@ -828,7 +860,7 @@ class FloatingTaskWindow(QWidget):
         self.settings.setValue("snap_edge", self.snap_edge or "")
         self.settings.setValue("snap_corner", self.snap_corner or "")
 
-    def show_window(self):
+    def show_window(self, activate=True):
         self.date_check_requested.emit()
         if self.current_page == PAGE_QUICK_NOTE:
             self.show_quick_note()
@@ -841,7 +873,8 @@ class FloatingTaskWindow(QWidget):
         else:
             self.ensure_inside_screen()
         self.raise_()
-        self.activateWindow()
+        if activate:
+            self.activateWindow()
         self.settings.setValue("visible", True)
 
     def hide_window(self):
@@ -960,20 +993,35 @@ class FloatingTaskWindow(QWidget):
         tasks = self.task_service.get_current_plan_tasks(PlanLevel.DAY, today)
         tasks = sorted(
             tasks,
-            key=lambda task: (
-                task.task_id not in self.pinned_task_ids,
-                task.created_at or "",
-                task.task_id or 0,
-            ),
+            key=self.task_sort_key,
         )
         return [
             (
                 task,
-                f"日期：{today.isoformat()}",
+                self.floating_time_text(task, today),
                 "日计划",
             )
             for task in tasks
         ]
+
+    def task_sort_key(self, task):
+        priority = normalize_priority(task.priority_level)
+        fixed_time = task.scheduled_at or "9999-12-31 23:59:59"
+        if priority != 0:
+            fixed_time = "9999-12-31 23:59:59"
+        return (
+            task.is_completed,
+            priority,
+            fixed_time,
+            task.task_id not in self.pinned_task_ids,
+            task.created_at or "",
+            task.task_id or 0,
+        )
+
+    def floating_time_text(self, task, today):
+        if normalize_priority(task.priority_level) == 0 and task.scheduled_at:
+            return f"时间：{format_task_time(task.scheduled_at)}"
+        return ""
 
     def toggle_task_pinned(self, task_id):
         if task_id in self.pinned_task_ids:
@@ -983,7 +1031,8 @@ class FloatingTaskWindow(QWidget):
         self.refresh_tasks()
 
     def complete_task(self, task_id):
-        self.task_service.complete_task(task_id)
+        if not prompt_and_complete_task(self, self.task_service, task_id):
+            return
         self.pinned_task_ids.discard(task_id)
         self.refresh_tasks()
         self.data_changed.emit()
@@ -1090,30 +1139,7 @@ class FloatingTaskWindow(QWidget):
         self.pin_window_button.update()
 
     def apply_context_menu_style(self, menu):
-        menu.setObjectName("FloatingContextMenu")
-        menu.setStyleSheet("""
-            QMenu#FloatingContextMenu, QMenu {
-                background-color: #1f1f1f;
-                color: white;
-                border: 1px solid #666666;
-                border-radius: 8px;
-                padding: 6px;
-            }
-            QMenu#FloatingContextMenu::item, QMenu::item {
-                color: white;
-                padding: 6px 18px;
-                border-radius: 4px;
-            }
-            QMenu#FloatingContextMenu::item:selected, QMenu::item:selected {
-                background-color: #444444;
-                color: white;
-            }
-            QMenu#FloatingContextMenu::separator, QMenu::separator {
-                height: 1px;
-                background-color: #666666;
-                margin: 5px 8px;
-            }
-        """)
+        apply_dark_popup_style(menu)
 
     def create_actions_menu(self):
         menu = QMenu(self)

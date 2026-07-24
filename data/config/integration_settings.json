@@ -1,0 +1,15 @@
+{
+  "ai": {
+    "base_url": "https://api.openai.com/v1",
+    "model": "",
+    "timeout_seconds": 90,
+    "temperature": 0.3
+  },
+  "email": {
+    "sender": "",
+    "smtp_host": "",
+    "smtp_port": 465,
+    "encryption": "ssl",
+    "recipient": ""
+  }
+}

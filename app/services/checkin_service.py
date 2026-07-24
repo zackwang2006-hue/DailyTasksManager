@@ -5,15 +5,15 @@ class CheckinService:
     def __init__(self):
         self.db = DBManager()
 
-    def add_daily_checkin(self, task_id, checkin_date, completed_at):
+    def add_daily_checkin(self, task_id, checkin_date, completed_at, completion_note=None):
         sql = """
         INSERT OR REPLACE INTO daily_checkins (
-            task_id, checkin_date, is_completed, completed_at
+            task_id, checkin_date, is_completed, completed_at, completion_note
         )
-        VALUES (?, ?, 1, ?)
+        VALUES (?, ?, 1, ?, ?)
         """
 
-        return self.db.execute(sql, (task_id, checkin_date, completed_at))
+        return self.db.execute(sql, (task_id, checkin_date, completed_at, completion_note))
 
     def add_daily_missed(self, task_id, checkin_date, settled_at):
         sql = """

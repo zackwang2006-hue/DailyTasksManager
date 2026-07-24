@@ -17,7 +17,7 @@ from app.services.history_service import HistoryService
 
 TASK_TYPE_LABELS = {
     "normal": "普通任务",
-    "timed": "定时任务",
+    "timed": "固定事件",
     "daily": "每日任务",
 }
 
@@ -26,7 +26,7 @@ CATEGORY_LABELS = {
     "long": "长期任务",
     "daily": "每日任务",
     "extra": "附加任务",
-    "timed": "定时任务",
+    "timed": "固定事件",
 }
 
 
@@ -206,6 +206,12 @@ class HistoryPage(QWidget):
             QLabel#LogMeta {
                 color: #666666;
                 background-color: transparent;
+            }
+
+            QLabel#CompletionNote {
+                color: #1f2937;
+                background-color: transparent;
+                padding-top: 4px;
             }
 
             QLabel#EmptyLabel {
@@ -418,6 +424,12 @@ class HistoryPage(QWidget):
         layout.addWidget(title_label)
         layout.addWidget(meta_label)
 
+        completion_note = (log["completion_note"] if "completion_note" in log.keys() else None) or "未记录完成情况"
+        completion_label = QLabel(f"完成情况：{completion_note}")
+        completion_label.setObjectName("CompletionNote")
+        completion_label.setWordWrap(True)
+        layout.addWidget(completion_label)
+
         if log["description"]:
             description_label = QLabel(log["description"])
             description_label.setWordWrap(True)
@@ -427,7 +439,7 @@ class HistoryPage(QWidget):
 
     def get_task_type_text(self, log):
         if log["task_type"] == "timed" or log["category"] == "timed":
-            return "定时任务"
+            return "固定事件"
 
         if log["task_type"] == "daily" or log["category"] == "daily":
             return "每日任务"

@@ -158,7 +158,7 @@ class PlanSystemRegressionTests(unittest.TestCase):
         parent_id = service.add_plan_task("parent", plan_level=PlanLevel.WEEK, now=date(2026, 7, 23))
         daily_id = service.add_daily_task_rule("daily", "", parent_id, today=date(2026, 7, 23))
 
-        service.complete_task_with_daily_sync(parent_id)
+        service.complete_task_with_daily_sync(parent_id, "完成情况记录")
         service.ensure_daily_plan_tasks_for_date(date(2026, 7, 24))
         self.assertIn("2026-07-24", self.generated_dates(service, daily_id))
 
@@ -173,19 +173,20 @@ class PlanSystemRegressionTests(unittest.TestCase):
         daily_id = service.add_daily_task_rule("daily", "", parent_id, today=date(2026, 7, 23))
         generated = service.get_generated_daily_plan_task(daily_id, date(2026, 7, 23))
 
-        service.complete_task_with_daily_sync(generated.task_id)
-        service.complete_task_with_daily_sync(generated.task_id)
+        service.complete_task_with_daily_sync(generated.task_id, "完成情况记录")
+        with self.assertRaises(ValueError):
+            service.complete_task_with_daily_sync(generated.task_id, "完成情况记录")
         rows = service.db.fetch_all("SELECT * FROM daily_checkins WHERE task_id = ?", (daily_id,))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["is_completed"], 1)
 
         service.ensure_daily_plan_tasks_for_date(date(2026, 7, 24))
         generated_next = service.get_generated_daily_plan_task(daily_id, date(2026, 7, 24))
-        service.set_daily_checkin_with_plan_sync(daily_id, date(2026, 7, 24), True)
+        service.set_daily_checkin_with_plan_sync(daily_id, date(2026, 7, 24), True, "完成情况记录")
         self.assertTrue(service.get_task_by_id(generated_next.task_id).is_completed)
 
         manual_id = service.add_plan_task("manual", plan_level=PlanLevel.DAY, now=date(2026, 7, 23))
-        service.complete_task_with_daily_sync(manual_id)
+        service.complete_task_with_daily_sync(manual_id, "完成情况记录")
         manual_rows = service.db.fetch_all("SELECT * FROM daily_checkins WHERE task_id = ?", (manual_id,))
         self.assertEqual(manual_rows, [])
 
@@ -285,7 +286,7 @@ class PlanSystemRegressionTests(unittest.TestCase):
     def test_ui_smoke_main_pages_and_refresh_guard(self):
         main = MainWindow()
         labels = [main.tab_widget.tabText(i) for i in range(main.tab_widget.count())]
-        self.assertIn("五年计划", labels)
+        self.assertIn("计划详情", labels)
         self.assertIn("每日任务", labels)
         self.assertIn("历史完成", labels)
         main._refreshing = True

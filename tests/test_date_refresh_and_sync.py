@@ -123,8 +123,9 @@ class DateRefreshAndSyncTests(unittest.TestCase):
         _, daily_id = self.create_week_daily_rule(service)
         generated = service.get_generated_daily_plan_task(daily_id, date(2026, 7, 23))
 
-        service.complete_task_with_daily_sync(generated.task_id)
-        service.complete_task_with_daily_sync(generated.task_id)
+        service.complete_task_with_daily_sync(generated.task_id, "完成情况记录")
+        with self.assertRaises(ValueError):
+            service.complete_task_with_daily_sync(generated.task_id, "完成情况记录")
 
         rows = service.db.fetch_all(
             """
@@ -143,7 +144,7 @@ class DateRefreshAndSyncTests(unittest.TestCase):
         generated = service.get_generated_daily_plan_task(daily_id, date(2026, 7, 23))
         self.assertFalse(generated.is_completed)
 
-        service.set_daily_checkin_with_plan_sync(daily_id, date(2026, 7, 23), True)
+        service.set_daily_checkin_with_plan_sync(daily_id, date(2026, 7, 23), True, "完成情况记录")
 
         self.assertTrue(service.get_task_by_id(generated.task_id).is_completed)
         status = CheckinService().get_checkin_statuses_by_task(daily_id)
@@ -153,7 +154,7 @@ class DateRefreshAndSyncTests(unittest.TestCase):
         service = TaskService()
         task_id = service.add_plan_task("manual", plan_level=PlanLevel.DAY, now=date(2026, 7, 23))
 
-        service.complete_task_with_daily_sync(task_id)
+        service.complete_task_with_daily_sync(task_id, "完成情况记录")
 
         rows = service.db.fetch_all("SELECT * FROM daily_checkins")
         self.assertEqual(rows, [])
@@ -162,7 +163,7 @@ class DateRefreshAndSyncTests(unittest.TestCase):
         service = TaskService()
         parent_id, daily_id = self.create_week_daily_rule(service)
 
-        service.complete_task_with_daily_sync(parent_id)
+        service.complete_task_with_daily_sync(parent_id, "完成情况记录")
         service.ensure_daily_plan_tasks_for_date(date(2026, 7, 24))
         self.assertIn("2026-07-24", self.generated_dates(service, daily_id))
 

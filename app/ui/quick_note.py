@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 
 from app.services.quick_note_storage import QuickNoteStorage
 from app.ui.flow_layout import FlowLayout
+from app.ui.dialog_style import apply_dialog_style
 from app.ui.theme import apply_dark_context_menu_style, quick_note_qss, preview_dialog_qss
 
 
@@ -881,6 +882,7 @@ class ImagePreviewDialog(QDialog):
 
     def apply_style(self):
         self.setStyleSheet(preview_dialog_qss())
+        apply_dialog_style(self)
 
 
 class QuickNoteView(QWidget):

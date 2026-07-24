@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from app.services.checkin_service import CheckinService
 from app.services.period_service import period_service
 from app.services.task_service import TaskService
+from app.ui.completion_flow import prompt_and_complete_daily_checkin
 from app.ui.daily_task_dialog import DailyTaskDialog
 from app.ui.theme import apply_dark_context_menu_style
 
@@ -282,11 +283,13 @@ class CheckinPage(QWidget):
             self.delete_daily_task(task.task_id)
 
     def complete_today_checkin(self, task_id):
-        self.task_service.set_daily_checkin_with_plan_sync(
+        if not prompt_and_complete_daily_checkin(
+            self,
+            self.task_service,
             task_id,
             period_service.get_local_today(),
-            True,
-        )
+        ):
+            return
         self.refresh_tasks()
         self.data_changed.emit()
 
@@ -299,6 +302,12 @@ class CheckinPage(QWidget):
                 title=data["title"],
                 description=data["description"],
                 parent_plan_task_id=data["parent_plan_task_id"],
+                scheduled_at=data.get("scheduled_at"),
+                fixed_time=data.get("fixed_time"),
+                is_important=data.get("is_important", False),
+                is_urgent=data.get("is_urgent", False),
+                is_fixed_event=data.get("is_fixed_event", False),
+                minimal_action=data.get("minimal_action"),
             )
             self.refresh_tasks()
             self.data_changed.emit()
@@ -317,6 +326,12 @@ class CheckinPage(QWidget):
                 title=data["title"],
                 description=data["description"],
                 parent_plan_task_id=data["parent_plan_task_id"],
+                scheduled_at=data.get("scheduled_at"),
+                fixed_time=data.get("fixed_time"),
+                is_important=data.get("is_important", False),
+                is_urgent=data.get("is_urgent", False),
+                is_fixed_event=data.get("is_fixed_event", False),
+                minimal_action=data.get("minimal_action"),
             )
             self.refresh_tasks()
             self.data_changed.emit()
